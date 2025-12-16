@@ -50,9 +50,8 @@ type TournamentSubscription struct {
 	TournamentUserID string    `json:"tournament_user_id" gorm:"not null;index"` // ← local FK
 	ExternalUserID   string    `json:"external_user_id"`
 	UserName         string    `json:"user_name"`
-	UserAvatarURL    *string   `json:"user_avatar_url,omitempty"` 
+	UserAvatarURL    *string   `json:"user_avatar_url,omitempty"`
 	JoinedAt         time.Time `json:"joined_at" gorm:"autoCreateTime"`
-
 	// ✅ Payment Metadata (enhanced)
 	PaymentID        string  `json:"payment_id"`                              // Unique identifier for the *payment* (e.g., Stripe payment_intent ID, Solana tx hash)
 	PaymentAmount    float64 `json:"payment_amount"`                          // Actual amount *paid* (USD or token, same unit as EntryFee)
@@ -76,7 +75,6 @@ type TournamentBatch struct {
 	StartDate    time.Time `json:"start_date"`             // Optional override
 	EndDate      time.Time `json:"end_date"`
 	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-
 	// Nested rounds (optional, but useful for preloading)
 	Rounds []TournamentRound `json:"rounds,omitempty" gorm:"foreignKey:BatchID"`
 }
@@ -93,7 +91,6 @@ type TournamentRound struct {
 	EndDate      time.Time `json:"end_date"`                        // Hard deadline
 	DurationMins int       `json:"duration_mins"`                   // Optional: max play time (for time-limited challenges)
 	Status       string    `json:"status" gorm:"default:'pending'"` // pending → active → closed → finalized
-
 	// Scoring logic hints (client/backend can interpret)
 	ScoreType string    `json:"score_type"` // "highest", "sum", "average", "last", "best_of_n"
 	Attempts  int       `json:"attempts"`   // max attempts per user (0 = unlimited)
@@ -130,14 +127,24 @@ type MiniTournament struct {
 }
 
 type UserWaiver struct {
-	ID          string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	UserID      string     `gorm:"index;not null"`       // ← MirroredUser.ExternalID (UUID string)
-	Code        string     `gorm:"uniqueIndex;not null"`
-	Amount      float64    `gorm:"not null"`
-	UsedAmount  float64    `gorm:"default:0"`
-	Description string     `gorm:"type:text"`
-	IsActive    bool       `gorm:"default:true"`
-	CreatedAt   time.Time  `gorm:"autoCreateTime"`
-	ExpiresAt   *time.Time `gorm:"index"`
-	IssuedByID  string     `gorm:"type:uuid"`
+	ID            string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	UserID        string     `gorm:"index;not null" json:"user_id"` // Links to TournamentUser.ID
+	Code          string     `gorm:"not null;index" json:"code"`
+	Title         string     `gorm:"not null" json:"title"`                   // e.g., "Welcome Bonus"
+	Type          string     `gorm:"not null;default:'discount'" json:"type"` // e.g., 'discount', 'cashback', 'entry_fee_reduction'
+	ImageURL      string     `gorm:"type:text" json:"image_url"`              // Optional image URL for badge
+	Emoji         string     `gorm:"size:10" json:"emoji"`                    // Optional emoji for badge
+	Excerpt       string     `gorm:"type:text" json:"excerpt"`                // Short description or note
+	Amount        float64    `gorm:"not null" json:"amount"`                  // Max value of the waiver
+	UsedAmount    float64    `gorm:"not null;default:0.0" json:"used_amount"`
+	Description   string     `json:"description"` // Longer description
+	IsActive      bool       `gorm:"default:true" json:"is_active"`
+	IsViewed      bool       `gorm:"default:false" json:"is_viewed"`   // New flag
+	IsRedeemed    bool       `gorm:"default:false" json:"is_redeemed"` // New flag: True if used at least once
+	IsClaimed     bool       `gorm:"default:false" json:"is_claimed"`
+	DurationHours int        `gorm:"default:168" json:"duration_hours"` // New: Hours from first use until expiry (default 7 days = 168h)
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"` // Can be set manually or computed from DurationHours on first use
+	IssuedByID    string     `json:"issued_by_id"`         // Links to TournamentUser.ID of the issuer
 }

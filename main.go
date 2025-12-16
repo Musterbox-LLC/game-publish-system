@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -60,9 +61,9 @@ func main() {
 		AllowOrigins:     allowedOriginsString, // Use the loaded origins
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Request-ID, User-Agent, Cache-Control, X-Session-Token, X-Service-Token, X-Device-ID", // Added X-Device-ID which is common
-		ExposeHeaders:    "Content-Length, Content-Type, Authorization, X-Request-ID, X-Access-Token, X-Refresh-Token, X-Otp-Not-Required", // Added common headers returned by your system
-		AllowCredentials: true, // Set to true if credentials (cookies, authorization headers) need to be included in requests
-		MaxAge:           86400, // 24 hours
+		ExposeHeaders:    "Content-Length, Content-Type, Authorization, X-Request-ID, X-Access-Token, X-Refresh-Token, X-Otp-Not-Required",                                        // Added common headers returned by your system
+		AllowCredentials: true,                                                                                                                                                    // Set to true if credentials (cookies, authorization headers) need to be included in requests
+		MaxAge:           86400,                                                                                                                                                   // 24 hours
 	}))
 
 	// ... rest of the main function remains the same ...
@@ -102,6 +103,7 @@ func main() {
 		&models.BadgeType{},
 		&models.UserBadge{},
 		&models.WalletMirror{},
+		&models.Reward{},
 	); err != nil {
 		log.Fatal("failed to migrate database:", err)
 	}
@@ -114,6 +116,7 @@ func main() {
 	tournamentService := services.NewTournamentService(db)
 	progressionService := services.NewProgressionService(db)
 	badgeService := services.NewBadgeService(db)
+	rewardService := services.NewRewardService(db)
 
 	// --- CONFIGURE Sync Service Details for Tournament Users ---
 	syncServiceURL := os.Getenv("SYNC_SERVICE_URL")
@@ -146,6 +149,19 @@ func main() {
 	handlers.SetupGameRoutes(app, gameService)
 	handlers.SetupTournamentRoutes(app, tournamentService)
 	handlers.SetupProgressionRoutes(app, progressionService, badgeService)
+
+	// --- NEW: Initialize Auth Service Client for SSE ---
+	authServiceURL := os.Getenv("AUTH_SERVICE_URL")
+	authServiceToken := os.Getenv("MS_SERVICE_TOKEN")
+	if authServiceURL == "" || authServiceToken == "" {
+		log.Fatal("❌ AUTH_SERVICE_URL and MS_SERVICE_TOKEN are required for SSE auth (e.g., /user/rewards/stream)")
+	}
+	authClient := services.NewAuthServiceClient(authServiceURL, authServiceToken)
+	log.Printf("✅ Auth service client initialized for SSE: %s", authServiceURL)
+	// --- END NEW ---
+
+	// Pass the authClient to SetupRewardRoutes
+	handlers.SetupRewardRoutes(app, rewardService, authClient)
 
 	app.Static("/uploads", "./uploads")
 

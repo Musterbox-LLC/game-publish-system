@@ -5,10 +5,9 @@ import (
 	"game-publish-system/models"
 	"game-publish-system/utils"
 	"log"
-	"math"
 	"path/filepath"
 	"strconv"
-	"strings" // Import strings for processing IsFeatured
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -23,31 +22,6 @@ type TournamentService struct {
 
 func NewTournamentService(db *gorm.DB) *TournamentService {
 	return &TournamentService{DB: db}
-}
-
-// --- Waiver-related request types ---
-type CreateWaiverRequest struct {
-	UserID      string     `json:"user_id" validate:"required"`
-	Code        string     `json:"code" validate:"required"`
-	Amount      float64    `json:"amount" validate:"required,gt=0"`
-	Description string     `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-}
-
-// UpdateWaiverRequest defines the structure for partial updates
-type UpdateWaiverRequest struct {
-	Code        *string    `json:"code,omitempty"`
-	Amount      *float64   `json:"amount,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	IsActive    *bool      `json:"is_active,omitempty"` // Crucial for toggling
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-}
-
-type RedeemWaiverRequest struct {
-	UserID       string  `json:"user_id" validate:"required,uuid"`
-	WaiverCode   string  `json:"waiver_code" validate:"required"`
-	AmountToUse  float64 `json:"amount_to_use" validate:"required,gt=0"` // user chooses this
-	TournamentID string  `json:"tournament_id" validate:"required,uuid"` // for audit + enforce tournament rules
 }
 
 func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
@@ -200,7 +174,6 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 		if err := tx.Omit("Photos").Create(tournament).Error; err != nil {
 			return err
 		}
-
 		// Set TournamentID for each photo and create them individually
 		for i := range photos {
 			photos[i].TournamentID = tournament.ID
@@ -208,19 +181,16 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 				return err
 			}
 		}
-
 		// Update tournament with photos for response
 		tournament.Photos = photos
 		return nil
 	})
-
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "DB insert failed"})
 	}
 
 	// Preload associations for response
 	s.DB.Preload("Photos").First(tournament, "id = ?", tournament.ID)
-
 	return c.Status(201).JSON(tournament)
 }
 
@@ -234,7 +204,6 @@ func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 // GetAllTournamentsMini returns a minimal list of tournament details, including the associated game.
 func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
-
 	// Fetch full Tournament models with the associated Game, selecting only the required fields for both.
 	// Use the main Tournament model for the query because it defines the GORM relationship.
 	err := s.DB.Model(&models.Tournament{}).
@@ -256,7 +225,6 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
 			game_id -- Need game_id to access the preloaded Game
 		`).
 		Find(&tournaments).Error
-
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
 	}
@@ -289,11 +257,9 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		ExternalUserID string `json:"external_user_id" validate:"required,uuid"` // UUID from Profile Service
 		UserName       string `json:"user_name" validate:"required"`
 		UserAvatarURL  string `json:"user_avatar_url,omitempty"`
-
 		// --- Optional Waiver ---
 		WaiverCode   string  `json:"waiver_code,omitempty"`   // e.g., "WELCOME10"
 		WaiverAmount float64 `json:"waiver_amount,omitempty"` // user-selected amount to apply (optional, defaults to remaining)
-
 		// --- Payment Details ---
 		PaymentID     string  `json:"payment_id,omitempty"`
 		PaymentAmount float64 `json:"payment_amount,omitempty"`
@@ -341,7 +307,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 			} else {
 				profilePicURL = nil
 			}
-
 			tUser = models.TournamentUser{
 				ID:                uuid.NewString(), // Explicitly generate ID
 				ExternalUserID:    req.ExternalUserID,
@@ -405,6 +370,7 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		if effectiveEntryFee < 0 {
 			effectiveEntryFee = 0 // Ensure effective fee doesn't go negative
 		}
+
 		// Log for debugging
 		log.Printf("Applying waiver %s: $%.2f (remaining $%.2f), effective fee: $%.2f", w.Code, amountToApply, remaining, effectiveEntryFee)
 	}
@@ -500,14 +466,12 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		UserName:         tUser.Username,       // ✅ Denormalized (safe copy at join time)
 		UserAvatarURL:    subUserAvatarURL,     // ✅ Assign the *string pointer
 		JoinedAt:         time.Now(),
-
-		PaymentID:     paymentID,
-		PaymentAmount: paymentAmount, // Use the effective amount (could be 0 if fully waived)
-		PaymentStatus: req.PaymentStatus,
-		TransactionID: transactionID,
-		PaymentMethod: paymentMethod,
-		PaymentAt:     paymentAt,
-
+		PaymentID:        paymentID,
+		PaymentAmount:    paymentAmount, // Use the effective amount (could be 0 if fully waived)
+		PaymentStatus:    req.PaymentStatus,
+		TransactionID:    transactionID,
+		PaymentMethod:    paymentMethod,
+		PaymentAt:        paymentAt,
 		// Waiver details (if applicable)
 		WaiverCodeUsed:   req.WaiverCode, // Store the code used
 		WaiverAmountUsed: amountToApply,  // Store the amount *applied* from the waiver
@@ -570,7 +534,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 	}
 
 	// ...
-
 	// Return safe response (don't expose internal IDs like TournamentUserID)
 	return c.Status(201).JSON(fiber.Map{
 		"message": "subscription created successfully",
@@ -589,89 +552,88 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 	})
 }
 
-
 // In services/tournament_service.go
 func (s *TournamentService) SuspendSubscription(c *fiber.Ctx) error {
-    tournamentID := c.Params("tournament_id")
-    userID := c.Params("user_id") // Or external_user_id depending on your path structure
+	tournamentID := c.Params("tournament_id")
+	userID := c.Params("user_id") // Or external_user_id depending on your path structure
 
-    type Req struct {
-        Reason string `json:"reason"`
-    }
-    var req Req
-    if err := c.BodyParser(&req); err != nil {
-        return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
-    }
+	type Req struct {
+		Reason string `json:"reason"`
+	}
 
-    // Find the subscription
-    var sub models.TournamentSubscription
-    if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
-        if err == gorm.ErrRecordNotFound {
-            return c.Status(404).JSON(fiber.Map{"error": "subscription not found"})
-        }
-        return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-    }
+	var req Req
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
 
-    // Update status and reason (add reason field to your model if needed)
-    now := time.Now()
-    updates := map[string]interface{}{
-        "payment_status": "suspended", // Or define a new status like "admin_suspended"
-        "suspended_at":   &now, // Add a suspended_at field to your model if needed
-        "suspended_reason": req.Reason, // Add a suspended_reason field to your model if needed
-    }
+	// Find the subscription
+	var sub models.TournamentSubscription
+	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(404).JSON(fiber.Map{"error": "subscription not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
 
-    if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
-        return c.Status(500).JSON(fiber.Map{"error": "suspend failed"})
-    }
+	// Update status and reason (add reason field to your model if needed)
+	now := time.Now()
+	updates := map[string]interface{}{
+		"payment_status":   "suspended", // Or define a new status like "admin_suspended"
+		"suspended_at":     &now,        // Add a suspended_at field to your model if needed
+		"suspended_reason": req.Reason,  // Add a suspended_reason field to your model if needed
+	}
 
-    return c.JSON(fiber.Map{"message": "subscription suspended", "subscription": sub})
+	if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "suspend failed"})
+	}
+
+	return c.JSON(fiber.Map{"message": "subscription suspended", "subscription": sub})
 }
 
 // In services/tournament_service.go
 func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
-    tournamentID := c.Params("tournament_id")
-    userID := c.Params("user_id") // External user ID from path
+	tournamentID := c.Params("tournament_id")
+	userID := c.Params("user_id") // External user ID from path
 
-    type Req struct {
-        Reason string `json:"reason"`
-    }
-    var req Req
-    if err := c.BodyParser(&req); err != nil {
-        return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
-    }
+	type Req struct {
+		Reason string `json:"reason"`
+	}
 
-    // Find the subscription
-    var sub models.TournamentSubscription
-    if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
-        if err == gorm.ErrRecordNotFound {
-            return c.Status(404).JSON(fiber.Map{"error": "subscription not found"})
-        }
-        return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-    }
+	var req Req
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
 
-    // Example logic (simplified):
-    if sub.PaymentStatus == "paid" {
-        
-        log.Printf("INFO: Subscription for user %s in tournament %s was paid ($%.2f). Refund logic needed.", userID, tournamentID, sub.PaymentAmount)
-        // You might update a field like 'refund_initiated_at' or 'refund_status' here if tracking separately.
-    } else if sub.WaiverCodeUsed != "" && sub.WaiverAmountUsed > 0 {
-      
-        log.Printf("INFO: Subscription for user %s in tournament %s used waiver '%s' ($%.2f). Waiver benefit lost.", userID, tournamentID, sub.WaiverCodeUsed, sub.WaiverAmountUsed)
-    }
+	// Find the subscription
+	var sub models.TournamentSubscription
+	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(404).JSON(fiber.Map{"error": "subscription not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
 
-    // 2. Update subscription status to 'revoked' and add reason
-    now := time.Now()
-    updates := map[string]interface{}{
-        "payment_status": "revoked", // Define a 'revoked' status
-        "revoked_at":     &now,      // Add a revoked_at field to your model if needed
-        "revoked_reason": req.Reason, // Add a revoked_reason field to your model if needed
-    }
+	// Example logic (simplified):
+	if sub.PaymentStatus == "paid" {
+		log.Printf("INFO: Subscription for user %s in tournament %s was paid ($%.2f). Refund logic needed.", userID, tournamentID, sub.PaymentAmount)
+		// You might update a field like 'refund_initiated_at' or 'refund_status' here if tracking separately.
+	} else if sub.WaiverCodeUsed != "" && sub.WaiverAmountUsed > 0 {
+		log.Printf("INFO: Subscription for user %s in tournament %s used waiver '%s' ($%.2f). Waiver benefit lost.", userID, tournamentID, sub.WaiverCodeUsed, sub.WaiverAmountUsed)
+	}
 
-    if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
-        return c.Status(500).JSON(fiber.Map{"error": "revoke failed"})
-    }
+	// 2. Update subscription status to 'revoked' and add reason
+	now := time.Now()
+	updates := map[string]interface{}{
+		"payment_status": "revoked", // Define a 'revoked' status
+		"revoked_at":     &now,      // Add a revoked_at field to your model if needed
+		"revoked_reason": req.Reason, // Add a revoked_reason field to your model if needed
+	}
 
-    return c.JSON(fiber.Map{"message": "subscription revoked", "subscription": sub})
+	if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "revoke failed"})
+	}
+
+	return c.JSON(fiber.Map{"message": "subscription revoked", "subscription": sub})
 }
 
 // getUserAvailableWaivers returns active, unexpired, non-exhausted waivers for a user.
@@ -682,7 +644,6 @@ func (s *TournamentService) getUserAvailableWaivers(userID string) ([]models.Use
 	query := s.DB.Where("user_id = ? AND is_active = true AND used_amount < amount", userID)
 	// Exclude expired (if ExpiresAt is set)
 	query = query.Where("expires_at IS NULL OR expires_at > ?", now)
-
 	if err := query.Find(&waivers).Error; err != nil {
 		return nil, err
 	}
@@ -741,7 +702,6 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 
 	// Re-fetch for response
 	s.DB.First(&sub, "id = ?", sub.ID)
-
 	return c.JSON(fiber.Map{
 		"message":      "refund processed",
 		"subscription": sub,
@@ -758,7 +718,6 @@ func (s *TournamentService) CreateBatch(c *fiber.Ctx) error {
 	}
 
 	tournamentID := c.Params("id")
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
@@ -815,7 +774,6 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	}
 
 	batchID := c.Params("batch_id")
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
@@ -831,6 +789,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid start_date"})
 	}
+
 	endDate, err := time.Parse(time.RFC3339, req.EndDate)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
@@ -869,14 +828,12 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 
 func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	var tournament models.Tournament
 	err := s.DB.Preload("Game").
 		Preload("Photos").
 		Preload("Batches.Rounds"). // ✅ Nested preload
 		Preload("Subscriptions").
 		First(&tournament, "id = ?", id).Error
-
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
@@ -889,7 +846,6 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
 
 func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	// Fetch existing
 	var existing models.Tournament
 	if err := s.DB.Preload("Photos").First(&existing, "id = ?", id).Error; err != nil {
@@ -948,7 +904,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			maxSubscribers = n // Use `n` here
 		}
 	}
-
 	entryFee := 0.0
 	if entryFeeStr != "" {
 		if f, err := strconv.ParseFloat(entryFeeStr, 64); err != nil || f < 0 { // `f` and `err` defined here
@@ -979,7 +934,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
 	// --- Handle photo updates (replace all) ---
 	var newPhotos []models.TournamentPhoto
-
 	// Main photo
 	if mainPhoto, err := c.FormFile("main_photo"); err == nil && mainPhoto.Size > 0 { // `mainPhoto` and `err` new
 		ext := filepath.Ext(mainPhoto.Filename)
@@ -1048,11 +1002,9 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			}
 		}
 		existing.Photos = newPhotos
-
 		// Save tournament
 		return tx.Save(&existing).Error
 	})
-
 	if txErr != nil { // Use the transaction error variable
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
@@ -1064,32 +1016,26 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
 func (s *TournamentService) DeleteTournament(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	return s.DB.Transaction(func(tx *gorm.DB) error {
 		// Delete in correct order to respect foreign key constraints:
 		// 1. TournamentRound references TournamentBatch, so delete rounds first
 		if err := tx.Where("tournament_id = ?", id).Delete(&models.TournamentRound{}).Error; err != nil {
 			return err
 		}
-
 		// 2. Now safe to delete batches
 		if err := tx.Where("tournament_id = ?", id).Delete(&models.TournamentBatch{}).Error; err != nil {
 			return err
 		}
-
 		// 3. Delete other dependent tables
 		if err := tx.Where("tournament_id = ?", id).Delete(&models.TournamentPhoto{}).Error; err != nil {
 			return err
 		}
-
 		if err := tx.Where("tournament_id = ?", id).Delete(&models.TournamentSubscription{}).Error; err != nil {
 			return err
 		}
-
 		if err := tx.Where("tournament_id = ?", id).Delete(&models.LeaderboardEntry{}).Error; err != nil {
 			return err
 		}
-
 		// 4. Finally delete the tournament itself
 		result := tx.Delete(&models.Tournament{}, "id = ?", id)
 		if result.Error != nil {
@@ -1104,7 +1050,6 @@ func (s *TournamentService) DeleteTournament(c *fiber.Ctx) error {
 
 func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	type Req struct {
 		Status string `json:"status" validate:"oneof=draft published active completed cancelled publish unpublish"` // Include 'publish' and 'unpublish' actions
 	}
@@ -1166,7 +1111,6 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 	result := s.DB.Model(&models.Tournament{}).
 		Where("id = ?", id).
 		Updates(updates) // Use Updates for multiple fields
-
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "DB update failed"})
 	}
@@ -1182,7 +1126,6 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 
 func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	type Req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -1220,12 +1163,12 @@ func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 	if err := s.DB.Save(&batch).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
+
 	return c.JSON(batch)
 }
 
 func (s *TournamentService) DeleteBatch(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	return s.DB.Transaction(func(tx *gorm.DB) error {
 		// Delete rounds first
 		tx.Where("batch_id = ?", id).Delete(&models.TournamentRound{})
@@ -1243,7 +1186,6 @@ func (s *TournamentService) DeleteBatch(c *fiber.Ctx) error {
 
 func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	type Req struct {
 		Name         string `json:"name"`
 		Description  string `json:"description"`
@@ -1292,12 +1234,12 @@ func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 	if err := s.DB.Save(&round).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
+
 	return c.JSON(round)
 }
 
 func (s *TournamentService) DeleteRound(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	result := s.DB.Delete(&models.TournamentRound{}, "id = ?", id)
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
@@ -1310,7 +1252,6 @@ func (s *TournamentService) DeleteRound(c *fiber.Ctx) error {
 
 func (s *TournamentService) GetTournamentSubscribers(c *fiber.Ctx) error {
 	tournamentID := c.Params("id")
-
 	var subs []models.TournamentSubscription
 	if err := s.DB.Where("tournament_id = ?", tournamentID).
 		Order("joined_at DESC").
@@ -1319,337 +1260,4 @@ func (s *TournamentService) GetTournamentSubscribers(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(subs)
-}
-
-// CreateWaiver issues a new reusable waiver (coupon) for a user.
-func (s *TournamentService) CreateWaiver(c *fiber.Ctx) error {
-	var req CreateWaiverRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid JSON",
-			"details": err.Error(),
-		})
-	}
-
-	// Validate code
-	if req.Code == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "code is required",
-		})
-	}
-
-	// Normalize code: trim + uppercase
-	code := strings.ToUpper(strings.TrimSpace(req.Code))
-	if len(code) == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "code cannot be empty after trimming",
-		})
-	}
-	if len(code) > 64 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "code too long (max 64 characters)",
-		})
-	}
-
-	// Ensure code uniqueness
-	var count int64
-	if err := s.DB.Model(&models.UserWaiver{}).
-		Where("code = ?", code).
-		Count(&count).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "database error checking code uniqueness",
-			"details": err.Error(),
-		})
-	}
-	if count > 0 {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"error": "waiver code already exists",
-		})
-	}
-
-	// Validate user exists in our LOCAL TournamentUser table
-	// req.UserID should be the ExternalUserID
-	var tournamentUser models.TournamentUser
-	if err := s.DB.First(&tournamentUser, "external_user_id = ?", req.UserID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(400).JSON(fiber.Map{"error": "user_id not found in local tournament_users"})
-		}
-		log.Printf("DB error checking tournament user: %v", err) // Add logging
-		return c.Status(500).JSON(fiber.Map{"error": "DB error checking user", "details": err.Error()})
-	}
-
-	// Safely extract IssuedByID (e.g., from admin middleware context)
-	// This assumes the middleware sets c.Locals("admin_id") to the *TournamentUser.ID* of the admin
-	var issuedByTournamentUserID string
-	if local := c.Locals("admin_id"); local != nil {
-		if id, ok := local.(string); ok && id != "" {
-			// Validate that the admin ID is a valid TournamentUser.ID
-			var adminTournamentUser models.TournamentUser
-			if err := s.DB.First(&adminTournamentUser, "id = ?", id).Error; err != nil {
-				log.Printf("Admin ID validation failed: %v", err) // Add logging
-				return c.Status(500).JSON(fiber.Map{"error": "Invalid admin context"})
-			}
-			issuedByTournamentUserID = id
-		}
-	}
-
-	// Fallback: if no admin context, assume user self-issued (e.g., promo redemption by the user themselves)
-	// In this case, IssuedByID would be the ID of the *beneficiary* user.
-	if issuedByTournamentUserID == "" {
-		// If self-issuance is not allowed, return an error here:
-		// return c.Status(403).JSON(fiber.Map{"error": "Admin privileges required to issue waivers"})
-		// Otherwise, use the beneficiary's TournamentUser.ID
-		issuedByTournamentUserID = tournamentUser.ID // Use the *local* ID of the user receiving the waiver
-	}
-
-	// Create waiver
-	// Use the *local* TournamentUser.ID for the UserWaiver.UserID
-	waiver := &models.UserWaiver{
-		ID:          uuid.NewString(),  // Generate new UUID for the waiver
-		UserID:      tournamentUser.ID, // ✅ Link to the *local* TournamentUser.ID
-		Code:        code,
-		Amount:      req.Amount,
-		UsedAmount:  0.0,
-		Description: req.Description,
-		IsActive:    true,
-		CreatedAt:   time.Now(),
-		ExpiresAt:   req.ExpiresAt,
-		IssuedByID:  issuedByTournamentUserID, // ✅ Store the *local* TournamentUser.ID of the issuer
-	}
-
-	if err := s.DB.Create(waiver).Error; err != nil {
-		log.Printf("DB error creating waiver: %v", err) // Add logging
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "failed to create waiver",
-			"details": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(waiver)
-}
-
-// RedeemWaiver allows a user to claim part of a waiver (e.g., before payment).
-// Returns the effective amount applied and updated waiver.
-func (s *TournamentService) RedeemWaiver(c *fiber.Ctx) error {
-	var req RedeemWaiverRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
-	}
-
-	// Fetch tournament to check waiver eligibility
-	var tournament models.Tournament
-	if err := s.DB.Select("id, accepts_waivers").First(&tournament, "id = ?", req.TournamentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
-		}
-		return c.Status(500).JSON(fiber.Map{"error": "DB error fetching tournament"})
-	}
-
-	if !tournament.AcceptsWaivers {
-		return c.Status(403).JSON(fiber.Map{"error": "this tournament does not accept waivers"})
-	}
-
-	// Fetch waiver (case-insensitive code match)
-	var waiver models.UserWaiver
-	codeUpper := strings.ToUpper(req.WaiverCode)
-	if err := s.DB.Where("user_id = ? AND UPPER(code) = ? AND is_active = true", req.UserID, codeUpper).
-		First(&waiver).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(404).JSON(fiber.Map{"error": "waiver not found or not owned by user"})
-		}
-		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-	}
-
-	// Check expiration
-	if waiver.ExpiresAt != nil && waiver.ExpiresAt.Before(time.Now()) {
-		return c.Status(400).JSON(fiber.Map{"error": "waiver has expired"})
-	}
-
-	// Check remaining balance
-	remaining := waiver.Amount - waiver.UsedAmount
-	if remaining <= 0 {
-		return c.Status(400).JSON(fiber.Map{"error": "waiver is fully used"})
-	}
-
-	// Clamp amount to remaining & to requested
-	amountToApply := math.Min(req.AmountToUse, remaining)
-
-	// 🔁 Atomic update
-	err := s.DB.Transaction(func(tx *gorm.DB) error {
-		// Re-fetch for concurrency safety (optional: use SELECT FOR UPDATE)
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", waiver.ID).
-			First(&waiver).Error; err != nil {
-			return err
-		}
-
-		newUsed := waiver.UsedAmount + amountToApply
-		if newUsed > waiver.Amount {
-			return fmt.Errorf("overspent waiver")
-		}
-
-		if err := tx.Model(&waiver).
-			Where("id = ?", waiver.ID).
-			Updates(map[string]interface{}{
-				"used_amount": newUsed,
-			}).Error; err != nil {
-			return err
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "failed to redeem waiver", "details": err.Error()})
-	}
-
-	// Refresh waiver
-	s.DB.First(&waiver, "id = ?", waiver.ID)
-
-	return c.JSON(fiber.Map{
-		"message":        "waiver redeemed successfully",
-		"waiver_code":    waiver.Code,
-		"amount_applied": amountToApply,
-		"remaining":      waiver.Amount - waiver.UsedAmount,
-		"waiver":         waiver,
-	})
-}
-
-// GetUserAvailableWaiversEndpoint returns all active, unexpired, non-exhausted waivers for a user.
-// GET /users/:user_id/waivers/available
-func (s *TournamentService) GetUserAvailableWaiversEndpoint(c *fiber.Ctx) error {
-	userID := c.Params("user_id")
-	if userID == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "user_id is required in path"})
-	}
-
-	waivers, err := s.getUserAvailableWaivers(userID)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error":   "failed to fetch available waivers",
-			"details": err.Error(),
-		})
-	}
-
-	// Format response
-	type WaiverSummary struct {
-		ID          string     `json:"id"`
-		Code        string     `json:"code"`
-		Amount      float64    `json:"amount"`
-		UsedAmount  float64    `json:"used_amount"`
-		Remaining   float64    `json:"remaining"`
-		Description string     `json:"description,omitempty"`
-		ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	}
-
-	response := make([]WaiverSummary, len(waivers))
-	for i, w := range waivers {
-		response[i] = WaiverSummary{
-			ID:          w.ID,
-			Code:        w.Code,
-			Amount:      w.Amount,
-			UsedAmount:  w.UsedAmount,
-			Remaining:   w.Amount - w.UsedAmount,
-			Description: w.Description,
-			ExpiresAt:   w.ExpiresAt,
-		}
-	}
-
-	hasWaiver := len(response) > 0
-	totalAvailable := 0.0
-	for _, w := range response {
-		totalAvailable += w.Remaining
-	}
-
-	return c.JSON(fiber.Map{
-		"has_waiver":      hasWaiver,
-		"total_available": totalAvailable,
-		"count":           len(response),
-		"waivers":         response,
-	})
-}
-
-func (s *TournamentService) GetAllWaivers(c *fiber.Ctx) error {
-	var waivers []models.UserWaiver
-	if err := s.DB.Find(&waivers).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-	}
-	return c.JSON(waivers)
-}
-
-func (s *TournamentService) UpdateWaiver(c *fiber.Ctx) error {
-	id := c.Params("id")
-	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "id required"})
-	}
-
-	var req UpdateWaiverRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
-	}
-
-	// Prepare updates map, only include fields that are present in the request
-	updates := make(map[string]interface{})
-	if req.Code != nil {
-		code := strings.ToUpper(strings.TrimSpace(*req.Code))
-		if code == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "code cannot be empty"})
-		}
-		// Enforce uniqueness (excluding self)
-		var count int64
-		s.DB.Model(&models.UserWaiver{}).Where("code = ? AND id != ?", code, id).Count(&count)
-		if count > 0 {
-			return c.Status(409).JSON(fiber.Map{"error": "code already in use"})
-		}
-		updates["code"] = code
-	}
-	if req.Amount != nil {
-		if *req.Amount <= 0 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount must be > 0"})
-		}
-		updates["amount"] = *req.Amount
-	}
-	if req.Description != nil {
-		updates["description"] = *req.Description
-	}
-	if req.IsActive != nil { // Handle IsActive toggle
-		updates["is_active"] = *req.IsActive
-	}
-	if req.ExpiresAt != nil {
-		updates["expires_at"] = *req.ExpiresAt
-	}
-
-	if len(updates) == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no fields to update"})
-	}
-
-	// Perform the update
-	if err := s.DB.Model(&models.UserWaiver{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "update failed", "details": err.Error()})
-	}
-
-	// Fetch the updated waiver to return
-	var updated models.UserWaiver
-	if err := s.DB.First(&updated, "id = ?", id).Error; err != nil {
-		// This should ideally not happen if the update succeeded, but handle it
-		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated waiver", "details": err.Error()})
-	}
-
-	return c.JSON(updated)
-}
-
-func (s *TournamentService) DeleteWaiver(c *fiber.Ctx) error {
-	id := c.Params("id")
-	if id == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "id required"})
-	}
-
-	result := s.DB.Delete(&models.UserWaiver{}, "id = ?", id)
-	if result.Error != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-	}
-	if result.RowsAffected == 0 {
-		return c.Status(404).JSON(fiber.Map{"error": "waiver not found"})
-	}
-	return c.JSON(fiber.Map{"message": "waiver deleted"})
 }
