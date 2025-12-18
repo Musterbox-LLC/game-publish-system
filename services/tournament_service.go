@@ -37,12 +37,14 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 	entryFeeStr := c.FormValue("entry_fee")
 	startTimeStr := c.FormValue("start_time")
 	endTimeStr := c.FormValue("end_time")
+
 	// --- NEW: Parse Prize Pool, Requirements, Sponsor Name, Is Featured, Publish Schedule ---
 	prizePool := c.FormValue("prize_pool")
 	requirementsStr := c.FormValue("requirements") // This is newline-separated string from frontend
 	sponsorName := c.FormValue("sponsor_name")
 	isFeaturedStr := c.FormValue("is_featured")
 	publishScheduleStr := c.FormValue("publish_schedule") // Expected format: RFC3339
+	acceptsWaiversStr := c.FormValue("accepts_waivers")
 
 	// CHANGED: Store requirements as the raw newline-separated string
 	processedRequirements := requirementsStr // Assign the string directly
@@ -51,6 +53,12 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 	isFeatured := false
 	if strings.ToLower(isFeaturedStr) == "true" {
 		isFeatured = true
+	}
+
+	// Process AcceptsWaivers
+	acceptsWaivers := true // Default to true
+	if strings.ToLower(acceptsWaiversStr) == "false" {
+		acceptsWaivers = false
 	}
 
 	// Process PublishSchedule
@@ -62,6 +70,7 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 		}
 		publishSchedule = &scheduledTime
 	}
+
 	// --- END NEW ---
 
 	// --- Validation ---
@@ -136,9 +145,10 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 				return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("failed to upload photo %d", i+1)})
 			}
 			photos = append(photos, models.TournamentPhoto{
-				ID:    uuid.NewString(), // ✅ Unique ID for each photo
-				URL:   url,
-				Order: i,
+				ID:           uuid.NewString(), // ✅ Unique ID for each photo
+				URL:          url,
+				Order:        i,
+				TournamentID: "", // Will be set in transaction
 			})
 		} else {
 			break // stop on first missing
@@ -147,18 +157,20 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 
 	// --- Create tournament ---
 	tournament := &models.Tournament{
-		ID:             uuid.NewString(), // ✅ Ensure unique tournament ID
-		GameID:         gameID,
-		Name:           name,
-		Description:    description,
-		Rules:          rules,
-		Guidelines:     guidelines,
-		Genre:          genre,
-		MaxSubscribers: maxSubscribers,
-		EntryFee:       entryFee,
-		MainPhotoURL:   mainPhotoURL,
-		StartTime:      startTime,
-		EndTime:        endTime,
+		ID:              uuid.NewString(), // ✅ Ensure unique tournament ID
+		GameID:          gameID,
+		Name:            name,
+		Description:     description,
+		Rules:           rules,
+		Guidelines:      guidelines,
+		Genre:           genre,
+		GenreTags:       c.FormValue("genre_tags"), // Added GenreTags
+		MaxSubscribers:  maxSubscribers,
+		EntryFee:        entryFee,
+		MainPhotoURL:    mainPhotoURL,
+		StartTime:       startTime,
+		EndTime:         endTime,
+		AcceptsWaivers:  acceptsWaivers, // Added AcceptsWaivers
 		// --- NEW: Assign Prize Pool, Requirements, Sponsor Name, Is Featured, Publish Schedule ---
 		PrizePool:       prizePool,
 		Requirements:    processedRequirements, // Assign the processed string
@@ -191,14 +203,14 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 	}
 
 	// Preload associations for response
-	s.DB.Preload("Photos").First(tournament, "id = ?", tournament.ID)
+	s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").First(tournament, "id = ?", tournament.ID)
 	return c.Status(201).JSON(tournament)
 }
 
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
-	// Preload Game, Photos, and the nested Batches -> Rounds structure
-	err := s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Find(&tournaments).Error // <--- Updated Preload
+	// Preload Game, Photos, Batches -> Rounds, and Subscriptions
+	err := s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").Find(&tournaments).Error
 	if err != nil {
 		// Log the error for debugging
 		log.Printf("ERROR fetching tournaments with preloads: %v", err)
@@ -253,7 +265,6 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
 			Game: t.Game, // This works because t.Game was preloaded
 		}
 	}
-
 	return c.JSON(miniTournaments)
 }
 
@@ -513,6 +524,7 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 				Where("id = ?", wLocked.ID).
 				Updates(map[string]interface{}{
 					"used_amount": newUsed,
+					"is_redeemed": true, // Mark as redeemed when used
 				}).Error; err != nil {
 				return fmt.Errorf("failed to update waiver used amount: %w", err)
 			}
@@ -676,7 +688,7 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 	}
 
 	var sub models.TournamentSubscription
-	if err := s.DB.Where("tournament_id = ? AND user_id = ?", tournamentID, userID).
+	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID). // Changed to external_user_id
 		First(&sub).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return c.Status(404).JSON(fiber.Map{"error": "subscription not found"})
@@ -707,7 +719,7 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 	}
 
 	// Re-fetch for response
-	s.DB.First(&sub, "id = ?", sub.ID)
+	s.DB.Preload("TournamentUser").First(&sub, "id = ?", sub.ID)
 	return c.JSON(fiber.Map{
 		"message":      "refund processed",
 		"subscription": sub,
@@ -762,7 +774,6 @@ func (s *TournamentService) CreateBatch(c *fiber.Ctx) error {
 	if err := s.DB.Create(batch).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to create batch"})
 	}
-
 	return c.Status(201).JSON(batch)
 }
 
@@ -828,7 +839,6 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	if err := s.DB.Create(round).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to create round"})
 	}
-
 	return c.Status(201).JSON(round)
 }
 
@@ -838,7 +848,7 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
 	err := s.DB.Preload("Game").
 		Preload("Photos").
 		Preload("Batches.Rounds"). // ✅ Nested preload
-		Preload("Subscriptions").
+		Preload("Subscriptions"). // Preload Subscriptions
 		First(&tournament, "id = ?", id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -846,14 +856,12 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 	}
-
 	return c.JSON(tournament)
 }
 
 // UpdateTournament handles updating an existing tournament by ID.
 func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	id := c.Params("id")
-
 	var existingTournament models.Tournament
 	if err := s.DB.Preload("Photos").First(&existingTournament, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -866,7 +874,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	// --- START: Validate and Parse start_time ---
 	startTimeStr := c.FormValue("start_time")
 	log.Printf("DEBUG: Received start_time string: '%s'", startTimeStr) // Add logging
-
 	if startTimeStr == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "start_time is required and cannot be empty",
@@ -918,10 +925,10 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		"start_time":  parsedStartTime, // Use the parsed time object
 		"name":        strings.TrimSpace(c.FormValue("name")),
 		"genre":       strings.TrimSpace(c.FormValue("genre")),
+		"genre_tags":  strings.TrimSpace(c.FormValue("genre_tags")), // Added GenreTags
 		"description": c.FormValue("description"),
 		"rules":       c.FormValue("rules"),
 		"guidelines":  c.FormValue("guidelines"),
-		"genre_tags":  c.FormValue("genre_tags"),
 		"max_subscribers": func() int {
 			if v := c.FormValue("max_subscribers"); v != "" {
 				if val, err := strconv.Atoi(v); err == nil {
@@ -942,8 +949,8 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		"requirements":    c.FormValue("requirements"),
 		"sponsor_name":    c.FormValue("sponsor_name"),
 		"is_featured":     c.FormValue("is_featured") == "true", // Handle boolean conversion
-		"accepts_waivers": c.FormValue("accepts_waivers") == "true",
-		"status":          c.FormValue("status"), // Consider validation if changing status here
+		"accepts_waivers": c.FormValue("accepts_waivers") == "true", // Handle boolean conversion for AcceptsWaivers
+		"status":          c.FormValue("status"),                   // Consider validation if changing status here
 	}
 
 	// Conditionally add end_time and publish_schedule to updates if they were provided
@@ -960,8 +967,8 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	if mainPhotoFile, err := c.FormFile("main_photo"); err == nil && mainPhotoFile.Size > 0 {
 		// Delete old main photo from storage if it existed
 		if existingTournament.MainPhotoURL != "" {
+			// Optionally delete from R2 here
 		}
-
 		ext := filepath.Ext(mainPhotoFile.Filename)
 		if ext == "" {
 			ext = ".jpg" // Default extension
@@ -990,8 +997,10 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Failed to upload secondary photo %d", i)})
 			}
 			newPhoto := models.TournamentPhoto{
-				URL:   url,
-				Order: i, // Maintain order based on index
+				ID:           uuid.NewString(), // Generate new ID for new photos
+				URL:          url,
+				Order:        i, // Maintain order based on index
+				TournamentID: existingTournament.ID, // Link to the tournament
 			}
 			newPhotos = append(newPhotos, newPhoto)
 		} else {
@@ -1024,7 +1033,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
 		// 2b. Create new secondary photos in the database
 		for _, photo := range newPhotos {
-			photo.TournamentID = existingTournament.ID // Link to the updated tournament
 			if err := tx.Create(&photo).Error; err != nil {
 				log.Printf("ERROR: Failed to create new secondary photo for tournament %s: %v", id, err)
 				return err
@@ -1037,21 +1045,19 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		} else {
 			existingTournament.EndTime = time.Time{}
 		}
-
 		existingTournament.PublishSchedule = parsedPublishSchedule
 		existingTournament.Photos = newPhotos
-
 		return nil
 	})
-
 	if err != nil {
 		log.Printf("ERROR: Transaction failed for updating tournament %s: %v", id, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update tournament"})
 	}
+
 	// --- END: Perform Atomic Update Transaction ---
 
 	// Fetch the fully updated tournament with photos for the response
-	if err := s.DB.Preload("Photos").First(&existingTournament, "id = ?", id).Error; err != nil {
+	if err := s.DB.Preload("Photos").Preload("Game").Preload("Batches.Rounds").Preload("Subscriptions").First(&existingTournament, "id = ?", id).Error; err != nil {
 		// This should ideally not happen if the transaction succeeded
 		log.Printf("ERROR: Could not refetch updated tournament %s: %v", id, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve updated tournament"})
@@ -1160,13 +1166,14 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "DB update failed"})
 	}
+
 	if result.RowsAffected == 0 {
 		return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
 	}
 
 	// Return updated tournament
 	var updated models.Tournament
-	s.DB.First(&updated, "id = ?", id)
+	s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").First(&updated, "id = ?", id)
 	return c.JSON(updated)
 }
 
@@ -1210,6 +1217,8 @@ func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
 
+	// Preload rounds for the response
+	s.DB.Preload("Rounds").First(&batch, "id = ?", id)
 	return c.JSON(batch)
 }
 
@@ -1299,11 +1308,10 @@ func (s *TournamentService) DeleteRound(c *fiber.Ctx) error {
 func (s *TournamentService) GetTournamentSubscribers(c *fiber.Ctx) error {
 	tournamentID := c.Params("id")
 	var subs []models.TournamentSubscription
-	if err := s.DB.Where("tournament_id = ?", tournamentID).
+	if err := s.DB.Preload("TournamentUser").Where("tournament_id = ?", tournamentID).
 		Order("joined_at DESC").
 		Find(&subs).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch subscribers"})
 	}
-
 	return c.JSON(subs)
 }
