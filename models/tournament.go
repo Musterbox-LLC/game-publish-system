@@ -39,12 +39,41 @@ type Tournament struct {
 	AvailableSlots         int64                    `json:"available_slots,omitempty" gorm:"-"`
 }
 
-// TournamentPhoto stores additional photos (max 5)
+
 type TournamentPhoto struct {
-	ID           string `json:"id" gorm:"primaryKey"`
-	TournamentID string `json:"tournament_id" gorm:"not null;index"`
-	URL          string `json:"url"` // ✅ R2 public URL
-	Order        int    `json:"order" gorm:"default:0"`
+    ID           string `json:"id" gorm:"primaryKey"`
+    TournamentID string `json:"tournament_id" gorm:"not null;index"`
+    URL          string `json:"url"`
+    SortOrder    int    `json:"sort_order" gorm:"column:sort_order;default:0"` // Changed from "order" to "sort_order"
+}
+
+type TournamentBatch struct {
+    ID           string    `json:"id" gorm:"primaryKey"`
+    TournamentID string    `json:"tournament_id" gorm:"not null;index"`
+    Name         string    `json:"name"`
+    Description  string    `json:"description"`
+    SortOrder    int       `json:"sort_order" gorm:"column:sort_order;default:0"` // Changed from "order" to "sort_order"
+    StartDate    time.Time `json:"start_date"`
+    EndDate      time.Time `json:"end_date"`
+    CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+    Rounds       []TournamentRound `json:"rounds,omitempty" gorm:"foreignKey:BatchID"`
+}
+
+type TournamentRound struct {
+    ID           string    `json:"id" gorm:"primaryKey"`
+    BatchID      string    `json:"batch_id" gorm:"not null;index"`
+    TournamentID string    `json:"tournament_id" gorm:"not null;index"`
+    Name         string    `json:"name"`
+    Description  string    `json:"description"`
+    SortOrder    int       `json:"sort_order" gorm:"column:sort_order;default:0"` // Changed from "order" to "sort_order"
+    StartDate    time.Time `json:"start_date"`
+    EndDate      time.Time `json:"end_date"`
+    DurationMins int       `json:"duration_mins"`
+    Status       string    `json:"status" gorm:"default:'pending'"`
+    ScoreType    string    `json:"score_type"`
+    Attempts     int       `json:"attempts"`
+    CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+    UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 // TournamentSubscription tracks user participation & payment metadata
@@ -69,39 +98,6 @@ type TournamentSubscription struct {
 	PaymentAt     *time.Time `json:"payment_at,omitempty"`     // When payment was confirmed
 }
 
-// TournamentBatch groups rounds (e.g., "Qualifier Group A", "Grand Finals")
-type TournamentBatch struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	TournamentID string    `json:"tournament_id" gorm:"not null;index"`
-	Name         string    `json:"name"` // e.g., "Batch 1", "Europe Qualifier"
-	Description  string    `json:"description"`
-	Order        int       `json:"order" gorm:"default:0"` // Sorting order
-	StartDate    time.Time `json:"start_date"`             // Optional override
-	EndDate      time.Time `json:"end_date"`
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-	// Nested rounds (optional, but useful for preloading)
-	Rounds []TournamentRound `json:"rounds,omitempty" gorm:"foreignKey:BatchID"`
-}
-
-// TournamentRound is a scoring phase within a batch
-type TournamentRound struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	BatchID      string    `json:"batch_id" gorm:"not null;index"`
-	TournamentID string    `json:"tournament_id" gorm:"not null;index"` // denormalized for perf
-	Name         string    `json:"name"`                                // e.g., "Daily Dash", "Boss Rush"
-	Description  string    `json:"description"`
-	Order        int       `json:"order" gorm:"default:0"`          // Round 1, 2, 3...
-	StartDate    time.Time `json:"start_date"`                      // When round opens for submissions
-	EndDate      time.Time `json:"end_date"`                        // Hard deadline
-	DurationMins int       `json:"duration_mins"`                   // Optional: max play time (for time-limited challenges)
-	Status       string    `json:"status" gorm:"default:'pending'"` // pending → active → closed → finalized
-	// Scoring logic hints (client/backend can interpret)
-	ScoreType string    `json:"score_type"` // "highest", "sum", "average", "last", "best_of_n"
-	Attempts  int       `json:"attempts"`   // max attempts per user (0 = unlimited)
-	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
-}
-
 // LeaderboardEntry — populated by game server webhook or client submission
 type LeaderboardEntry struct {
 	ID           string    `json:"id" gorm:"primaryKey"`
@@ -117,26 +113,27 @@ type LeaderboardEntry struct {
 
 // MiniTournament represents a brief summary of a tournament for listing
 type MiniTournament struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Status       string     `json:"status"`
-	StartTime    time.Time  `json:"start_time"`
-	MainPhotoURL string     `json:"main_photo_url"`
-	EntryFee     float64    `json:"entry_fee"`
-	PrizePool    string     `json:"prize_pool"`
-	SponsorName  string     `json:"sponsor_name"`
-	IsFeatured   bool       `json:"is_featured"`
-	PublishedAt  *time.Time `json:"published_at,omitempty"`
-	// Add more fields from the full tournament for the list view
-	GameID         string    `json:"game_id"`
-	Genre          string    `json:"genre,omitempty"`
-	Description    string    `json:"description,omitempty"`
-	MaxSubscribers int       `json:"max_subscribers"`
-	EndTime        time.Time `json:"end_time,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Game           Game      `json:"game"`
+    ID           string     `json:"id"`
+    Name         string     `json:"name"`
+    Status       string     `json:"status"`
+    StartTime    time.Time  `json:"start_time"`
+    EndTime      time.Time  `json:"end_time"` // Added this
+    MainPhotoURL string     `json:"main_photo_url"`
+    EntryFee     float64    `json:"entry_fee"`
+    PrizePool    string     `json:"prize_pool"`
+    SponsorName  string     `json:"sponsor_name"`
+    IsFeatured   bool       `json:"is_featured"`
+    PublishedAt  *time.Time `json:"published_at,omitempty"`
+    // Add more fields from the full tournament for the list view
+    GameID         string    `json:"game_id"`
+    Genre          string    `json:"genre,omitempty"`
+    Description    string    `json:"description,omitempty"`
+    MaxSubscribers int       `json:"max_subscribers"`
+    CreatedAt      time.Time `json:"created_at"`
+    UpdatedAt      time.Time `json:"updated_at"`
+    Game           Game      `json:"game"`
 }
+
 
 type UserWaiver struct {
 	ID            string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`

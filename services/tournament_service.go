@@ -37,7 +37,6 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 	entryFeeStr := c.FormValue("entry_fee")
 	startTimeStr := c.FormValue("start_time")
 	endTimeStr := c.FormValue("end_time")
-
 	// --- NEW: Parse Prize Pool, Requirements, Sponsor Name, Is Featured, Publish Schedule ---
 	prizePool := c.FormValue("prize_pool")
 	requirementsStr := c.FormValue("requirements") // This is newline-separated string from frontend
@@ -70,8 +69,6 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 		}
 		publishSchedule = &scheduledTime
 	}
-
-	// --- END NEW ---
 
 	// --- Validation ---
 	if gameID == "" || name == "" || startTimeStr == "" {
@@ -147,7 +144,7 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 			photos = append(photos, models.TournamentPhoto{
 				ID:           uuid.NewString(), // ✅ Unique ID for each photo
 				URL:          url,
-				Order:        i,
+				SortOrder:    i, // ✅ Now correctly uses SortOrder
 				TournamentID: "", // Will be set in transaction
 			})
 		} else {
@@ -202,15 +199,37 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "DB insert failed"})
 	}
 
-	// Preload associations for response
-	s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").First(tournament, "id = ?", tournament.ID)
+	// Preload associations for response — ✅ FIX: ORDER BY "sort_order"
+	s.DB.Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions").First(tournament, "id = ?", tournament.ID)
 	return c.Status(201).JSON(tournament)
 }
 
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
-	// Preload Game, Photos, Batches -> Rounds, and Subscriptions
-	err := s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").Find(&tournaments).Error
+	// Preload associations — ✅ FIX: ORDER BY "sort_order"
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions").
+		Find(&tournaments).Error
 	if err != nil {
 		// Log the error for debugging
 		log.Printf("ERROR fetching tournaments with preloads: %v", err)
@@ -221,37 +240,45 @@ func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 
 // GetAllTournamentsMini returns a minimal list of tournament details, including the associated game.
 func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
-    type TournamentMini struct {
-        ID              string     `json:"id"`
-        Name            string     `json:"name"`
-        Status          string     `json:"status"`
-        StartTime       time.Time  `json:"start_time"`
-        MainPhotoURL    string     `json:"main_photo_url"`
-        EntryFee        float64    `json:"entry_fee"`
-        PrizePool       string     `json:"prize_pool"`
-        SponsorName     string     `json:"sponsor_name"`
-        IsFeatured      bool       `json:"is_featured"`
-        PublishedAt     *time.Time `json:"published_at,omitempty"`
-        GameID          string     `json:"game_id"`
-        GameName        string     `json:"game_name"`
-        GameLogoURL     string     `json:"game_logo_url,omitempty"`
-        MaxSubscribers  int        `json:"max_subscribers"`
-        SubscribersCount int64     `json:"subscribers_count"`
-        Genre           string     `json:"genre,omitempty"`
-        Description     string     `json:"description,omitempty"`
-        CreatedAt       time.Time  `json:"created_at"`
-        UpdatedAt       time.Time  `json:"updated_at"`
-    }
-    
-    var tournaments []TournamentMini
-    
-    // Fixed query with proper quoting for PostgreSQL
-    query := `
+	type TournamentMini struct {
+		ID              string     `json:"id"`
+		Name            string     `json:"name"`
+		Status          string     `json:"status"`
+		StartTime       time.Time  `json:"start_time"`
+		EndTime         time.Time  `json:"end_time"` // Added this field
+		MainPhotoURL    string     `json:"main_photo_url"`
+		EntryFee        float64    `json:"entry_fee"`
+		PrizePool       string     `json:"prize_pool"`
+		SponsorName     string     `json:"sponsor_name"`
+		IsFeatured      bool       `json:"is_featured"`
+		PublishedAt     *time.Time `json:"published_at,omitempty"`
+		GameID          string     `json:"game_id"`
+		GameName        string     `json:"game_name"`
+		GameLogoURL     string     `json:"game_logo_url,omitempty"`
+		MaxSubscribers  int        `json:"max_subscribers"`
+		SubscribersCount int64     `json:"subscribers_count"`
+		Genre           string     `json:"genre,omitempty"`
+		Description     string     `json:"description,omitempty"`
+		CreatedAt       time.Time  `json:"created_at"`
+		UpdatedAt       time.Time  `json:"updated_at"`
+		// Add other fields that might be needed
+		Requirements    string     `json:"requirements,omitempty"`
+		Rules           string     `json:"rules,omitempty"`
+		Guidelines      string     `json:"guidelines,omitempty"`
+		AcceptsWaivers  bool       `json:"accepts_waivers"`
+		PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
+	}
+	var tournaments []TournamentMini
+	// Updated query to include end_time and other missing fields
+	// ⚠️ Note: This query does *not* require ordering by sort_order — it's just a list by created_at.
+	// But if you want to sort by sort_order of batches/rounds later, that’s in full fetch, not mini.
+	query := `
         SELECT 
             t.id,
             t.name,
             t.status,
             t.start_time,
+            t.end_time,
             t.main_photo_url,
             t.entry_fee,
             t.prize_pool,
@@ -261,7 +288,12 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
             t.game_id,
             t.genre,
             t.description,
+            t.requirements,
+            t.rules,
+            t.guidelines,
             t.max_subscribers,
+            t.accepts_waivers,
+            t.publish_schedule,
             t.created_at,
             t.updated_at,
             g.name as game_name,
@@ -273,16 +305,13 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
         GROUP BY t.id, g.id
         ORDER BY t.created_at DESC
     `
-    
-    err := s.DB.Raw(query).Scan(&tournaments).Error
-    if err != nil {
-        log.Printf("ERROR fetching mini tournaments: %v", err)
-        return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
-    }
-    
-    return c.JSON(tournaments)
+	err := s.DB.Raw(query).Scan(&tournaments).Error
+	if err != nil {
+		log.Printf("ERROR fetching mini tournaments: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
+	}
+	return c.JSON(tournaments)
 }
-
 
 // SubscribeToTournament adds user to tournament with full payment & waiver tracking
 func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
@@ -364,7 +393,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		if !tournament.AcceptsWaivers {
 			return c.Status(403).JSON(fiber.Map{"error": "this tournament does not accept waivers"})
 		}
-
 		// 🔧 Fetch the specific waiver by code and user ID, regardless of current used_amount vs amount
 		codeUpper := strings.ToUpper(req.WaiverCode)
 		var w models.UserWaiver
@@ -374,7 +402,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 			}
 			return c.Status(500).JSON(fiber.Map{"error": "DB error fetching waiver", "details": err.Error()})
 		}
-
 		// Validate waiver state (active, not expired)
 		if !w.IsActive {
 			return c.Status(400).JSON(fiber.Map{"error": "waiver is not active"})
@@ -382,13 +409,11 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		if w.ExpiresAt != nil && w.ExpiresAt.Before(time.Now()) {
 			return c.Status(400).JSON(fiber.Map{"error": "waiver has expired"})
 		}
-
 		// Calculate usable amount
 		remaining := w.Amount - w.UsedAmount
 		if remaining <= 0 {
 			return c.Status(400).JSON(fiber.Map{"error": "waiver is fully used and has no remaining balance"})
 		}
-
 		// Determine how much to apply
 		amountToApply = req.WaiverAmount
 		if amountToApply <= 0 {
@@ -397,13 +422,11 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		if amountToApply > remaining {
 			amountToApply = remaining // Cap at remaining amount
 		}
-
 		waiverToUse = &w // Store the waiver object for the transaction later
 		effectiveEntryFee = tournament.EntryFee - amountToApply
 		if effectiveEntryFee < 0 {
 			effectiveEntryFee = 0 // Ensure effective fee doesn't go negative
 		}
-
 		// Log for debugging
 		log.Printf("Applying waiver %s: $%.2f (remaining $%.2f), effective fee: $%.2f", w.Code, amountToApply, remaining, effectiveEntryFee)
 	}
@@ -435,7 +458,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 	transactionID := req.TransactionID
 	paymentMethod := req.PaymentMethod
 	var paymentAt *time.Time
-
 	switch req.PaymentStatus {
 	case "waived":
 		// If effective fee is 0 due to waiver, this is valid.
@@ -490,7 +512,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 	} else {
 		subUserAvatarURL = nil
 	}
-
 	sub := models.TournamentSubscription{
 		ID:               uuid.NewString(),
 		TournamentID:     tournamentID,
@@ -521,7 +542,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 				First(&wLocked).Error; err != nil {
 				return fmt.Errorf("failed to lock waiver for update: %w", err)
 			}
-
 			// Double-check remaining balance within the transaction
 			remainingInTx := wLocked.Amount - wLocked.UsedAmount
 			if remainingInTx < amountToApply {
@@ -529,12 +549,10 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 				// due to concurrent updates. Handle this case.
 				return fmt.Errorf("insufficient waiver balance at transaction time (have $%.2f, need $%.2f)", remainingInTx, amountToApply)
 			}
-
 			newUsed := wLocked.UsedAmount + amountToApply
 			if newUsed > wLocked.Amount {
 				return fmt.Errorf("calculated used amount exceeds waiver total")
 			}
-
 			// Update the waiver's used amount
 			if err := tx.Model(&wLocked).
 				Where("id = ?", wLocked.ID).
@@ -544,15 +562,12 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 				}).Error; err != nil {
 				return fmt.Errorf("failed to update waiver used amount: %w", err)
 			}
-
 			// Set the waiver ID used in the subscription record
 			sub.WaiverIDUsed = wLocked.ID // Use the ID from the locked waiver within the transaction
-
 			// Create the subscription record
 			if err := tx.Create(&sub).Error; err != nil {
 				return fmt.Errorf("failed to create subscription: %w", err)
 			}
-
 			return nil
 		})
 		if err != nil {
@@ -567,7 +582,6 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 		}
 	}
 
-	// ...
 	// Return safe response (don't expose internal IDs like TournamentUserID)
 	return c.Status(201).JSON(fiber.Map{
 		"message": "subscription created successfully",
@@ -590,16 +604,13 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 func (s *TournamentService) SuspendSubscription(c *fiber.Ctx) error {
 	tournamentID := c.Params("tournament_id")
 	userID := c.Params("user_id") // Or external_user_id depending on your path structure
-
 	type Req struct {
 		Reason string `json:"reason"`
 	}
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	// Find the subscription
 	var sub models.TournamentSubscription
 	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
@@ -608,7 +619,6 @@ func (s *TournamentService) SuspendSubscription(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 	}
-
 	// Update status and reason (add reason field to your model if needed)
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -616,11 +626,9 @@ func (s *TournamentService) SuspendSubscription(c *fiber.Ctx) error {
 		"suspended_at":     &now,        // Add a suspended_at field to your model if needed
 		"suspended_reason": req.Reason,  // Add a suspended_reason field to your model if needed
 	}
-
 	if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "suspend failed"})
 	}
-
 	return c.JSON(fiber.Map{"message": "subscription suspended", "subscription": sub})
 }
 
@@ -628,16 +636,13 @@ func (s *TournamentService) SuspendSubscription(c *fiber.Ctx) error {
 func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
 	tournamentID := c.Params("tournament_id")
 	userID := c.Params("user_id") // External user ID from path
-
 	type Req struct {
 		Reason string `json:"reason"`
 	}
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	// Find the subscription
 	var sub models.TournamentSubscription
 	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID).First(&sub).Error; err != nil {
@@ -646,7 +651,6 @@ func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 	}
-
 	// Example logic (simplified):
 	if sub.PaymentStatus == "paid" {
 		log.Printf("INFO: Subscription for user %s in tournament %s was paid ($%.2f). Refund logic needed.", userID, tournamentID, sub.PaymentAmount)
@@ -654,7 +658,6 @@ func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
 	} else if sub.WaiverCodeUsed != "" && sub.WaiverAmountUsed > 0 {
 		log.Printf("INFO: Subscription for user %s in tournament %s used waiver '%s' ($%.2f). Waiver benefit lost.", userID, tournamentID, sub.WaiverCodeUsed, sub.WaiverAmountUsed)
 	}
-
 	// 2. Update subscription status to 'revoked' and add reason
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -662,11 +665,9 @@ func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
 		"revoked_at":     &now,       // Add a revoked_at field to your model if needed
 		"revoked_reason": req.Reason, // Add a revoked_reason field to your model if needed
 	}
-
 	if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "revoke failed"})
 	}
-
 	return c.JSON(fiber.Map{"message": "subscription revoked", "subscription": sub})
 }
 
@@ -690,19 +691,15 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 		RefundReason string `json:"refund_reason,omitempty"`
 		RefundedBy   string `json:"refunded_by,omitempty"` // admin/user ID
 	}
-
 	tournamentID := c.Params("tournament_id")
 	userID := c.Params("user_id")
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	if tournamentID == "" || userID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "tournament_id and user_id are required in URL"})
 	}
-
 	var sub models.TournamentSubscription
 	if err := s.DB.Where("tournament_id = ? AND external_user_id = ?", tournamentID, userID). // Changed to external_user_id
 		First(&sub).Error; err != nil {
@@ -711,29 +708,24 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 	}
-
 	if sub.PaymentStatus == "refunded" {
 		return c.Status(400).JSON(fiber.Map{"error": "already refunded"})
 	}
-
 	if sub.PaymentStatus != "paid" {
 		return c.Status(400).JSON(fiber.Map{
 			"error":   "only 'paid' subscriptions can be refunded",
 			"current": sub.PaymentStatus,
 		})
 	}
-
 	now := time.Now()
 	updates := map[string]interface{}{
 		"payment_status": "refunded",
 		"payment_at":     now, // or keep original? We overwrite to reflect refund time
 		// Optional: store metadata in a separate table or as JSON string
 	}
-
 	if err := s.DB.Model(&sub).Updates(updates).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "refund failed"})
 	}
-
 	// Re-fetch for response
 	s.DB.Preload("TournamentUser").First(&sub, "id = ?", sub.ID)
 	return c.JSON(fiber.Map{
@@ -746,22 +738,19 @@ func (s *TournamentService) CreateBatch(c *fiber.Ctx) error {
 	type Req struct {
 		Name        string `json:"name" validate:"required"`
 		Description string `json:"description"`
-		Order       int    `json:"order"`
+		SortOrder   int    `json:"sort_order"` // ✅ Use SortOrder
 		StartDate   string `json:"start_date"` // RFC3339
 		EndDate     string `json:"end_date"`
 	}
-
 	tournamentID := c.Params("id")
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	// Validate tournament exists
 	if err := s.DB.First(&models.Tournament{}, "id = ?", tournamentID).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
 	}
-
 	var startDate, endDate time.Time
 	var err error
 	if req.StartDate != "" {
@@ -776,17 +765,15 @@ func (s *TournamentService) CreateBatch(c *fiber.Ctx) error {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
 		}
 	}
-
 	batch := &models.TournamentBatch{
 		ID:           uuid.NewString(),
 		TournamentID: tournamentID,
 		Name:         req.Name,
 		Description:  req.Description,
-		Order:        req.Order,
+		SortOrder:    req.SortOrder, // ✅ Correct field
 		StartDate:    startDate,
 		EndDate:      endDate,
 	}
-
 	if err := s.DB.Create(batch).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to create batch"})
 	}
@@ -797,7 +784,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	type Req struct {
 		Name         string `json:"name" validate:"required"`
 		Description  string `json:"description"`
-		Order        int    `json:"order"`
+		SortOrder    int    `json:"sort_order"` // ✅ Use SortOrder
 		StartDate    string `json:"start_date" validate:"required"`
 		EndDate      string `json:"end_date" validate:"required"`
 		DurationMins int    `json:"duration_mins"`
@@ -805,41 +792,35 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 		ScoreType    string `json:"score_type"` // "highest", "sum", etc.
 		Attempts     int    `json:"attempts"`
 	}
-
 	batchID := c.Params("batch_id")
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	// Fetch batch to get tournament ID
 	var batch models.TournamentBatch
 	if err := s.DB.First(&batch, "id = ?", batchID).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
 	}
-
 	startDate, err := time.Parse(time.RFC3339, req.StartDate)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid start_date"})
 	}
-
 	endDate, err := time.Parse(time.RFC3339, req.EndDate)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
 	}
-
 	// Validate logic: end ≥ start
 	if !endDate.After(startDate) {
 		return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
 	}
-
 	round := &models.TournamentRound{
 		ID:           uuid.NewString(),
 		BatchID:      batchID,
 		TournamentID: batch.TournamentID, // ✅ denormalized
 		Name:         req.Name,
 		Description:  req.Description,
-		Order:        req.Order,
+		SortOrder:    req.SortOrder, // ✅ Correct field
 		StartDate:    startDate,
 		EndDate:      endDate,
 		DurationMins: req.DurationMins,
@@ -847,83 +828,69 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 		ScoreType:    req.ScoreType,
 		Attempts:     req.Attempts,
 	}
-
 	if round.ScoreType == "" {
 		round.ScoreType = "highest" // default
 	}
-
 	if err := s.DB.Create(round).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to create round"})
 	}
 	return c.Status(201).JSON(round)
 }
 
-
 func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
-    id := c.Params("id")
-    
-    var tournament models.Tournament
-    err := s.DB.
-        Preload("Game").
-        Preload("Photos", func(db *gorm.DB) *gorm.DB {
-            // For PostgreSQL, use double quotes for reserved keywords
-            return db.Order("\"order\" ASC")
-        }).
-        Preload("Batches", func(db *gorm.DB) *gorm.DB {
-            // Use double quotes for PostgreSQL
-            return db.Order("\"order\" ASC")
-        }).
-        Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
-            // Use double quotes for PostgreSQL
-            return db.Order("\"order\" ASC")
-        }).
-        Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
-            return db.Order("joined_at DESC")
-        }).
-        First(&tournament, "id = ?", id).Error
-    
-    if err != nil {
-        if err == gorm.ErrRecordNotFound {
-            return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
-        }
-        log.Printf("ERROR fetching tournament %s: %v", id, err)
-        return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-    }
-    
-    // Get subscribers count
-    var subsCount int64
-    s.DB.Model(&models.TournamentSubscription{}).
-        Where("tournament_id = ?", id).
-        Count(&subsCount)
-    
-    // Get active subscribers count (with paid status)
-    var activeSubsCount int64
-    s.DB.Model(&models.TournamentSubscription{}).
-        Where("tournament_id = ? AND payment_status = 'paid'", id).
-        Count(&activeSubsCount)
-    
-    // Prepare response with enhanced data
-    type EnhancedTournamentResponse struct {
-        models.Tournament
-        SubscribersCount      int64 `json:"subscribers_count"`
-        ActiveSubscribersCount int64 `json:"active_subscribers_count"`
-        AvailableSlots        int64 `json:"available_slots"`
-    }
-    
-    // Calculate available slots
-    availableSlots := int64(tournament.MaxSubscribers) - subsCount
-    if tournament.MaxSubscribers <= 0 {
-        availableSlots = -1 // unlimited
-    }
-    
-    response := EnhancedTournamentResponse{
-        Tournament:            tournament,
-        SubscribersCount:      subsCount,
-        ActiveSubscribersCount: activeSubsCount,
-        AvailableSlots:        availableSlots,
-    }
-    
-    return c.JSON(response)
+	id := c.Params("id")
+	var tournament models.Tournament
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			// ✅ FIX: order by "sort_order"
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			// ✅ FIX: order by "sort_order"
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+			// ✅ FIX: order by "sort_order"
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		Preload("Subscriptions.TournamentUser"). // Preload TournamentUser for each subscription
+		First(&tournament, "id = ?", id).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+		}
+		log.Printf("ERROR fetching tournament %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+	// Get subscribers count
+	var subsCount int64
+	s.DB.Model(&models.TournamentSubscription{}).
+		Where("tournament_id = ?", id).
+		Count(&subsCount)
+	// Get active subscribers count (with paid status)
+	var activeSubsCount int64
+	s.DB.Model(&models.TournamentSubscription{}).
+		Where("tournament_id = ? AND payment_status = 'paid'", id).
+		Count(&activeSubsCount)
+	// Get leaderboard entries count
+	var leaderboardCount int64
+	s.DB.Model(&models.LeaderboardEntry{}).
+		Where("tournament_id = ?", id).
+		Count(&leaderboardCount)
+	// Calculate available slots
+	availableSlots := int64(tournament.MaxSubscribers) - subsCount
+	if tournament.MaxSubscribers <= 0 {
+		availableSlots = -1 // unlimited
+	}
+	// Set computed fields
+	tournament.SubscribersCount = subsCount
+	tournament.ActiveSubscribersCount = activeSubsCount
+	tournament.AvailableSlots = availableSlots
+	return c.JSON(tournament)
 }
 
 // UpdateTournament handles updating an existing tournament by ID.
@@ -937,7 +904,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		log.Printf("DB Error fetching tournament %s: %v", id, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
-
 	// --- START: Validate and Parse start_time ---
 	startTimeStr := c.FormValue("start_time")
 	log.Printf("DEBUG: Received start_time string: '%s'", startTimeStr) // Add logging
@@ -946,7 +912,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			"error": "start_time is required and cannot be empty",
 		})
 	}
-
 	// Attempt to parse the received string as RFC3339
 	parsedStartTime, err := time.Parse(time.RFC3339, startTimeStr)
 	if err != nil {
@@ -956,7 +921,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		})
 	}
 	// --- END: Validate and Parse start_time ---
-
 	// --- START: Validate and Parse end_time (if provided) ---
 	endTimeStr := c.FormValue("end_time")
 	var parsedEndTime *time.Time // Use pointer to handle optional field
@@ -971,7 +935,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		parsedEndTime = &parsedET // Assign the address of the parsed time
 	}
 	// --- END: Validate and Parse end_time ---
-
 	// --- START: Validate and Parse publish_schedule (if provided) ---
 	publishScheduleStr := c.FormValue("publish_schedule")
 	var parsedPublishSchedule *time.Time
@@ -986,7 +949,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		parsedPublishSchedule = &parsedPS
 	}
 	// --- END: Validate and Parse publish_schedule ---
-
 	// --- START: Prepare updates map ---
 	updates := map[string]interface{}{
 		"start_time":  parsedStartTime, // Use the parsed time object
@@ -1019,7 +981,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		"accepts_waivers": c.FormValue("accepts_waivers") == "true", // Handle boolean conversion for AcceptsWaivers
 		"status":          c.FormValue("status"),                   // Consider validation if changing status here
 	}
-
 	// Conditionally add end_time and publish_schedule to updates if they were provided
 	if parsedEndTime != nil {
 		updates["end_time"] = *parsedEndTime
@@ -1029,7 +990,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	}
 
 	var newPhotos []models.TournamentPhoto
-
 	// 1. Handle Main Photo Replacement
 	if mainPhotoFile, err := c.FormFile("main_photo"); err == nil && mainPhotoFile.Size > 0 {
 		// Delete old main photo from storage if it existed
@@ -1066,7 +1026,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			newPhoto := models.TournamentPhoto{
 				ID:           uuid.NewString(), // Generate new ID for new photos
 				URL:          url,
-				Order:        i, // Maintain order based on index
+				SortOrder:    i, // ✅ Now correctly uses SortOrder
 				TournamentID: existingTournament.ID, // Link to the tournament
 			}
 			newPhotos = append(newPhotos, newPhoto)
@@ -1082,7 +1042,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			log.Printf("ERROR: Failed to update tournament %s: %v", id, err)
 			return err
 		}
-
 		// Step 2: Handle Photo Updates (same as before)
 		// 2a. Delete existing secondary photos from database and storage (optional: add soft-delete logic)
 		var existingSecondaryPhotos []models.TournamentPhoto
@@ -1097,7 +1056,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 				return err
 			}
 		}
-
 		// 2b. Create new secondary photos in the database
 		for _, photo := range newPhotos {
 			if err := tx.Create(&photo).Error; err != nil {
@@ -1105,7 +1063,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 				return err
 			}
 		}
-
 		existingTournament.StartTime = parsedStartTime
 		if parsedEndTime != nil {
 			existingTournament.EndTime = *parsedEndTime
@@ -1120,16 +1077,24 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		log.Printf("ERROR: Transaction failed for updating tournament %s: %v", id, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update tournament"})
 	}
-
 	// --- END: Perform Atomic Update Transaction ---
-
-	// Fetch the fully updated tournament with photos for the response
-	if err := s.DB.Preload("Photos").Preload("Game").Preload("Batches.Rounds").Preload("Subscriptions").First(&existingTournament, "id = ?", id).Error; err != nil {
+	// Fetch the fully updated tournament with photos for the response — ✅ FIX: ORDER BY "sort_order"
+	if err := s.DB.
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Game").
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions").First(&existingTournament, "id = ?", id).Error; err != nil {
 		// This should ideally not happen if the transaction succeeded
 		log.Printf("ERROR: Could not refetch updated tournament %s: %v", id, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve updated tournament"})
 	}
-
 	return c.JSON(existingTournament)
 }
 
@@ -1172,12 +1137,10 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 	type Req struct {
 		Status string `json:"status" validate:"oneof=draft published active completed cancelled publish unpublish"` // Include 'publish' and 'unpublish' actions
 	}
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	// Treat 'publish' and 'unpublish' as special actions
 	var updates map[string]interface{}
 	switch req.Status {
@@ -1190,7 +1153,6 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 			}
 			return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 		}
-
 		// Determine final status and published time based on schedule
 		finalStatus := "published"
 		publishedAt := time.Now()
@@ -1207,7 +1169,6 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 			// No schedule, go active immediately
 			finalStatus = "active"
 		}
-
 		updates = map[string]interface{}{
 			"status":       finalStatus,
 			"published_at": publishedAt,
@@ -1226,21 +1187,29 @@ func (s *TournamentService) UpdateTournamentStatus(c *fiber.Ctx) error {
 	default:
 		return c.Status(400).JSON(fiber.Map{"error": "invalid status"})
 	}
-
 	result := s.DB.Model(&models.Tournament{}).
 		Where("id = ?", id).
 		Updates(updates) // Use Updates for multiple fields
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "DB update failed"})
 	}
-
 	if result.RowsAffected == 0 {
 		return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
 	}
-
-	// Return updated tournament
+	// Return updated tournament — ✅ FIX: ORDER BY "sort_order"
 	var updated models.Tournament
-	s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Preload("Subscriptions").First(&updated, "id = ?", id)
+	s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions").First(&updated, "id = ?", id)
 	return c.JSON(updated)
 }
 
@@ -1249,21 +1218,18 @@ func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 	type Req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Order       int    `json:"order"`
+		SortOrder   int    `json:"sort_order"` // ✅ Use SortOrder
 		StartDate   string `json:"start_date"`
 		EndDate     string `json:"end_date"`
 	}
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	var batch models.TournamentBatch
 	if err := s.DB.First(&batch, "id = ?", id).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
 	}
-
 	// Parse dates
 	if req.StartDate != "" {
 		if t, err := time.Parse(time.RFC3339, req.StartDate); err == nil {
@@ -1275,17 +1241,16 @@ func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 			batch.EndDate = t
 		}
 	}
-
 	batch.Name = req.Name
 	batch.Description = req.Description
-	batch.Order = req.Order
-
+	batch.SortOrder = req.SortOrder // ✅ Correct field
 	if err := s.DB.Save(&batch).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
-
-	// Preload rounds for the response
-	s.DB.Preload("Rounds").First(&batch, "id = ?", id)
+	// Preload rounds for the response — ✅ FIX: ORDER BY "sort_order"
+	s.DB.Preload("Rounds", func(db *gorm.DB) *gorm.DB {
+		return db.Order("\"sort_order\" ASC")
+	}).First(&batch, "id = ?", id)
 	return c.JSON(batch)
 }
 
@@ -1311,7 +1276,7 @@ func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 	type Req struct {
 		Name         string `json:"name"`
 		Description  string `json:"description"`
-		Order        int    `json:"order"`
+		SortOrder    int    `json:"sort_order"` // ✅ Use SortOrder
 		StartDate    string `json:"start_date"`
 		EndDate      string `json:"end_date"`
 		DurationMins int    `json:"duration_mins"`
@@ -1319,17 +1284,14 @@ func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 		ScoreType    string `json:"score_type"`
 		Attempts     int    `json:"attempts"`
 	}
-
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-
 	var round models.TournamentRound
 	if err := s.DB.First(&round, "id = ?", id).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "round not found"})
 	}
-
 	// Parse & validate dates
 	if req.StartDate != "" {
 		if t, err := time.Parse(time.RFC3339, req.StartDate); err == nil {
@@ -1344,19 +1306,16 @@ func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 	if !round.EndDate.After(round.StartDate) && !round.EndDate.IsZero() {
 		return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
 	}
-
 	round.Name = req.Name
 	round.Description = req.Description
-	round.Order = req.Order
+	round.SortOrder = req.SortOrder // ✅ Correct field
 	round.DurationMins = req.DurationMins
 	round.Status = req.Status
 	round.ScoreType = req.ScoreType
 	round.Attempts = req.Attempts
-
 	if err := s.DB.Save(&round).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
 	}
-
 	return c.JSON(round)
 }
 
