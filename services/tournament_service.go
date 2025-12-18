@@ -235,23 +235,17 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
         GameID          string     `json:"game_id"`
         GameName        string     `json:"game_name"`
         GameLogoURL     string     `json:"game_logo_url,omitempty"`
+        MaxSubscribers  int        `json:"max_subscribers"`
+        SubscribersCount int64     `json:"subscribers_count"`
         Genre           string     `json:"genre,omitempty"`
         Description     string     `json:"description,omitempty"`
-        MaxSubscribers  int        `json:"max_subscribers"`
-        EndTime         time.Time  `json:"end_time,omitempty"`
         CreatedAt       time.Time  `json:"created_at"`
         UpdatedAt       time.Time  `json:"updated_at"`
-        SubscribersCount int64     `json:"subscribers_count"`
-        Requirements    string     `json:"requirements,omitempty"`
-        Rules           string     `json:"rules,omitempty"`
-        Guidelines      string     `json:"guidelines,omitempty"`
-        AcceptsWaivers  bool       `json:"accepts_waivers"`
-        PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
     }
     
     var tournaments []TournamentMini
     
-    // Raw SQL query for better performance with joins
+    // Fixed query with proper quoting for PostgreSQL
     query := `
         SELECT 
             t.id,
@@ -265,19 +259,13 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
             t.is_featured,
             t.published_at,
             t.game_id,
-            g.name as game_name,
-            g.main_logo_url as game_logo_url,
             t.genre,
             t.description,
             t.max_subscribers,
-            t.end_time,
             t.created_at,
             t.updated_at,
-            t.requirements,
-            t.rules,
-            t.guidelines,
-            t.accepts_waivers,
-            t.publish_schedule,
+            g.name as game_name,
+            g.main_logo_url as game_logo_url,
             COUNT(ts.id) as subscribers_count
         FROM tournaments t
         LEFT JOIN games g ON t.game_id = g.id
@@ -288,12 +276,13 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
     
     err := s.DB.Raw(query).Scan(&tournaments).Error
     if err != nil {
-        log.Printf("ERROR fetching enhanced mini tournaments: %v", err)
+        log.Printf("ERROR fetching mini tournaments: %v", err)
         return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
     }
     
     return c.JSON(tournaments)
 }
+
 
 // SubscribeToTournament adds user to tournament with full payment & waiver tracking
 func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
@@ -869,7 +858,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	return c.Status(201).JSON(round)
 }
 
-// Update GetTournamentByID in tournament_service.go
+
 func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
     id := c.Params("id")
     
@@ -877,16 +866,19 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
     err := s.DB.
         Preload("Game").
         Preload("Photos", func(db *gorm.DB) *gorm.DB {
-            return db.Order("`order` ASC") // Order photos by order field
+            // For PostgreSQL, use double quotes for reserved keywords
+            return db.Order("\"order\" ASC")
         }).
         Preload("Batches", func(db *gorm.DB) *gorm.DB {
-            return db.Order("`order` ASC") // Order batches by order field
+            // Use double quotes for PostgreSQL
+            return db.Order("\"order\" ASC")
         }).
         Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
-            return db.Order("`order` ASC") // Order rounds by order field
+            // Use double quotes for PostgreSQL
+            return db.Order("\"order\" ASC")
         }).
         Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
-            return db.Order("joined_at DESC") // Order by join date
+            return db.Order("joined_at DESC")
         }).
         First(&tournament, "id = ?", id).Error
     
@@ -894,6 +886,7 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
         if err == gorm.ErrRecordNotFound {
             return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
         }
+        log.Printf("ERROR fetching tournament %s: %v", id, err)
         return c.Status(500).JSON(fiber.Map{"error": "DB error"})
     }
     
@@ -912,15 +905,22 @@ func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
     // Prepare response with enhanced data
     type EnhancedTournamentResponse struct {
         models.Tournament
-        SubscribersCount     int64 `json:"subscribers_count"`
+        SubscribersCount      int64 `json:"subscribers_count"`
         ActiveSubscribersCount int64 `json:"active_subscribers_count"`
-        // Add other computed fields if needed
+        AvailableSlots        int64 `json:"available_slots"`
+    }
+    
+    // Calculate available slots
+    availableSlots := int64(tournament.MaxSubscribers) - subsCount
+    if tournament.MaxSubscribers <= 0 {
+        availableSlots = -1 // unlimited
     }
     
     response := EnhancedTournamentResponse{
-        Tournament:           tournament,
-        SubscribersCount:     subsCount,
+        Tournament:            tournament,
+        SubscribersCount:      subsCount,
         ActiveSubscribersCount: activeSubsCount,
+        AvailableSlots:        availableSlots,
     }
     
     return c.JSON(response)
