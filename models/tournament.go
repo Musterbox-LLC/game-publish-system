@@ -30,10 +30,13 @@ type Tournament struct {
 	PublishSchedule *time.Time `json:"publish_schedule,omitempty"`       // Optional scheduled time to publish/activate the tournament
 	AcceptsWaivers  bool       `gorm:"default:true"`
 	// Relationships (properly defined)
-	Game          Game                     `json:"game,omitempty" gorm:"foreignKey:GameID"`              // ✅ 1-to-many: Game -> Tournament
-	Photos        []TournamentPhoto        `json:"photos,omitempty" gorm:"foreignKey:TournamentID"`      // ✅ 1-to-many: Tournament -> Photos
-	Batches       []TournamentBatch        `json:"batches,omitempty" gorm:"foreignKey:TournamentID"`     // ✅ 1-to-many: Tournament -> Batches
-	Subscriptions []TournamentSubscription `json:"subscribers,omitempty" gorm:"foreignKey:TournamentID"` // ✅ 1-to-many: Tournament -> Subscriptions
+	Game                   Game                     `json:"game,omitempty" gorm:"foreignKey:GameID"`              // ✅ 1-to-many: Game -> Tournament
+	Photos                 []TournamentPhoto        `json:"photos,omitempty" gorm:"foreignKey:TournamentID"`      // ✅ 1-to-many: Tournament -> Photos
+	Batches                []TournamentBatch        `json:"batches,omitempty" gorm:"foreignKey:TournamentID"`     // ✅ 1-to-many: Tournament -> Batches
+	Subscriptions          []TournamentSubscription `json:"subscribers,omitempty" gorm:"foreignKey:TournamentID"` // ✅ 1-to-many: Tournament -> Subscriptions
+	SubscribersCount       int64                    `json:"subscribers_count,omitempty" gorm:"-"`
+	ActiveSubscribersCount int64                    `json:"active_subscribers_count,omitempty" gorm:"-"`
+	AvailableSlots         int64                    `json:"available_slots,omitempty" gorm:"-"`
 }
 
 // TournamentPhoto stores additional photos (max 5)
@@ -124,7 +127,15 @@ type MiniTournament struct {
 	SponsorName  string     `json:"sponsor_name"`
 	IsFeatured   bool       `json:"is_featured"`
 	PublishedAt  *time.Time `json:"published_at,omitempty"`
-	Game         Game       `json:"game"` // Embedded Game struct
+	// Add more fields from the full tournament for the list view
+	GameID         string    `json:"game_id"`
+	Genre          string    `json:"genre,omitempty"`
+	Description    string    `json:"description,omitempty"`
+	MaxSubscribers int       `json:"max_subscribers"`
+	EndTime        time.Time `json:"end_time,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Game           Game      `json:"game"`
 }
 
 type UserWaiver struct {

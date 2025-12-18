@@ -221,51 +221,78 @@ func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 
 // GetAllTournamentsMini returns a minimal list of tournament details, including the associated game.
 func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
-	var tournaments []models.Tournament
-	// Fetch full Tournament models with the associated Game, selecting only the required fields for both.
-	// Use the main Tournament model for the query because it defines the GORM relationship.
-	err := s.DB.Model(&models.Tournament{}).
-		Preload("Game", func(db *gorm.DB) *gorm.DB {
-			// Select only the specific fields needed from the Game table
-			return db.Select("id, name, main_logo_url") // Add other specific game fields you want to return here if needed
-		}).
-		Select(`
-			id, 
-			name, 
-			status, 
-			start_time, 
-			main_photo_url, 
-			entry_fee, 
-			prize_pool, 
-			sponsor_name, 
-			is_featured, 
-			published_at,
-			game_id -- Need game_id to access the preloaded Game
-		`).
-		Find(&tournaments).Error
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
-	}
-
-	// Manually map the results to MiniTournament structs
-	miniTournaments := make([]models.MiniTournament, len(tournaments))
-	for i, t := range tournaments {
-		miniTournaments[i] = models.MiniTournament{
-			ID:           t.ID,
-			Name:         t.Name,
-			Status:       t.Status,
-			StartTime:    t.StartTime,
-			MainPhotoURL: t.MainPhotoURL,
-			EntryFee:     t.EntryFee,
-			PrizePool:    t.PrizePool,
-			SponsorName:  t.SponsorName,
-			IsFeatured:   t.IsFeatured,
-			PublishedAt:  t.PublishedAt,
-			// Manually assign the preloaded Game object
-			Game: t.Game, // This works because t.Game was preloaded
-		}
-	}
-	return c.JSON(miniTournaments)
+    type TournamentMini struct {
+        ID              string     `json:"id"`
+        Name            string     `json:"name"`
+        Status          string     `json:"status"`
+        StartTime       time.Time  `json:"start_time"`
+        MainPhotoURL    string     `json:"main_photo_url"`
+        EntryFee        float64    `json:"entry_fee"`
+        PrizePool       string     `json:"prize_pool"`
+        SponsorName     string     `json:"sponsor_name"`
+        IsFeatured      bool       `json:"is_featured"`
+        PublishedAt     *time.Time `json:"published_at,omitempty"`
+        GameID          string     `json:"game_id"`
+        GameName        string     `json:"game_name"`
+        GameLogoURL     string     `json:"game_logo_url,omitempty"`
+        Genre           string     `json:"genre,omitempty"`
+        Description     string     `json:"description,omitempty"`
+        MaxSubscribers  int        `json:"max_subscribers"`
+        EndTime         time.Time  `json:"end_time,omitempty"`
+        CreatedAt       time.Time  `json:"created_at"`
+        UpdatedAt       time.Time  `json:"updated_at"`
+        SubscribersCount int64     `json:"subscribers_count"`
+        Requirements    string     `json:"requirements,omitempty"`
+        Rules           string     `json:"rules,omitempty"`
+        Guidelines      string     `json:"guidelines,omitempty"`
+        AcceptsWaivers  bool       `json:"accepts_waivers"`
+        PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
+    }
+    
+    var tournaments []TournamentMini
+    
+    // Raw SQL query for better performance with joins
+    query := `
+        SELECT 
+            t.id,
+            t.name,
+            t.status,
+            t.start_time,
+            t.main_photo_url,
+            t.entry_fee,
+            t.prize_pool,
+            t.sponsor_name,
+            t.is_featured,
+            t.published_at,
+            t.game_id,
+            g.name as game_name,
+            g.main_logo_url as game_logo_url,
+            t.genre,
+            t.description,
+            t.max_subscribers,
+            t.end_time,
+            t.created_at,
+            t.updated_at,
+            t.requirements,
+            t.rules,
+            t.guidelines,
+            t.accepts_waivers,
+            t.publish_schedule,
+            COUNT(ts.id) as subscribers_count
+        FROM tournaments t
+        LEFT JOIN games g ON t.game_id = g.id
+        LEFT JOIN tournament_subscriptions ts ON t.id = ts.tournament_id
+        GROUP BY t.id, g.id
+        ORDER BY t.created_at DESC
+    `
+    
+    err := s.DB.Raw(query).Scan(&tournaments).Error
+    if err != nil {
+        log.Printf("ERROR fetching enhanced mini tournaments: %v", err)
+        return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
+    }
+    
+    return c.JSON(tournaments)
 }
 
 // SubscribeToTournament adds user to tournament with full payment & waiver tracking
@@ -842,21 +869,61 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	return c.Status(201).JSON(round)
 }
 
+// Update GetTournamentByID in tournament_service.go
 func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
-	id := c.Params("id")
-	var tournament models.Tournament
-	err := s.DB.Preload("Game").
-		Preload("Photos").
-		Preload("Batches.Rounds"). // ✅ Nested preload
-		Preload("Subscriptions"). // Preload Subscriptions
-		First(&tournament, "id = ?", id).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
-		}
-		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
-	}
-	return c.JSON(tournament)
+    id := c.Params("id")
+    
+    var tournament models.Tournament
+    err := s.DB.
+        Preload("Game").
+        Preload("Photos", func(db *gorm.DB) *gorm.DB {
+            return db.Order("`order` ASC") // Order photos by order field
+        }).
+        Preload("Batches", func(db *gorm.DB) *gorm.DB {
+            return db.Order("`order` ASC") // Order batches by order field
+        }).
+        Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
+            return db.Order("`order` ASC") // Order rounds by order field
+        }).
+        Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+            return db.Order("joined_at DESC") // Order by join date
+        }).
+        First(&tournament, "id = ?", id).Error
+    
+    if err != nil {
+        if err == gorm.ErrRecordNotFound {
+            return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+        }
+        return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+    }
+    
+    // Get subscribers count
+    var subsCount int64
+    s.DB.Model(&models.TournamentSubscription{}).
+        Where("tournament_id = ?", id).
+        Count(&subsCount)
+    
+    // Get active subscribers count (with paid status)
+    var activeSubsCount int64
+    s.DB.Model(&models.TournamentSubscription{}).
+        Where("tournament_id = ? AND payment_status = 'paid'", id).
+        Count(&activeSubsCount)
+    
+    // Prepare response with enhanced data
+    type EnhancedTournamentResponse struct {
+        models.Tournament
+        SubscribersCount     int64 `json:"subscribers_count"`
+        ActiveSubscribersCount int64 `json:"active_subscribers_count"`
+        // Add other computed fields if needed
+    }
+    
+    response := EnhancedTournamentResponse{
+        Tournament:           tournament,
+        SubscribersCount:     subsCount,
+        ActiveSubscribersCount: activeSubsCount,
+    }
+    
+    return c.JSON(response)
 }
 
 // UpdateTournament handles updating an existing tournament by ID.
