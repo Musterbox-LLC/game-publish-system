@@ -12,7 +12,8 @@ type Tournament struct {
 	Description     string     `json:"description"`
 	Rules           string     `json:"rules"`
 	Guidelines      string     `json:"guidelines"`
-	Genre           string     `json:"genre"`                            // e.g., "FPS", "Puzzle", "Racing"
+	Genre           string     `json:"genre"` // e.g., "FPS", "Puzzle", "Racing"
+	GenreTags       string     `json:"genre_tags" gorm:"column:genre_tags"`
 	MaxSubscribers  int        `json:"max_subscribers" gorm:"default:0"` // 0 = unlimited
 	EntryFee        float64    `json:"entry_fee" gorm:"default:0"`       // in USD or tokens (handle currency layer later)
 	MainPhotoURL    string     `json:"main_photo_url"`                   // ✅ R2 public URL
