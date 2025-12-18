@@ -811,59 +811,71 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	return c.Status(201).JSON(round)
 }
 
+// GetTournamentByID retrieves a tournament by ID along with its related data.
 func (s *TournamentService) GetTournamentByID(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var tournament models.Tournament
+
+	// Preload all necessary associations to build the complete tournament object.
+	// This includes Game, Photos ordered by sort_order, Batches ordered by sort_order,
+	// and the Rounds within each Batch, also ordered by sort_order.
 	err := s.DB.
 		Preload("Game").
 		Preload("Photos", func(db *gorm.DB) *gorm.DB {
-			// ✅ FIX: order by "sort_order"
+			// ✅ FIX: Order by "sort_order" (quoted as it's a reserved keyword in PostgreSQL)
 			return db.Order("\"sort_order\" ASC")
 		}).
 		Preload("Batches", func(db *gorm.DB) *gorm.DB {
-			// ✅ FIX: order by "sort_order"
+			// ✅ FIX: Order by "sort_order"
 			return db.Order("\"sort_order\" ASC")
 		}).
 		Preload("Batches.Rounds", func(db *gorm.DB) *gorm.DB {
-			// ✅ FIX: order by "sort_order"
+			// ✅ FIX: Order Rounds by "sort_order" within each Batch
 			return db.Order("\"sort_order\" ASC")
 		}).
 		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			// Order subscriptions by join time, for example
 			return db.Order("joined_at DESC")
 		}).
-		// Removed: Preload("Subscriptions.TournamentUser") as it no longer exists
+		// Removed: Preload("Subscriptions.TournamentUser") as TournamentUser model was removed
 		First(&tournament, "id = ?", id).Error
+
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
 		}
 		log.Printf("ERROR fetching tournament %s: %v", id, err)
 		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
 	}
-	// Get subscribers count
+
+	// Calculate related counts for the tournament
 	var subsCount int64
 	s.DB.Model(&models.TournamentSubscription{}).
 		Where("tournament_id = ?", id).
 		Count(&subsCount)
-	// Get active subscribers count (with paid status)
+
 	var activeSubsCount int64
 	s.DB.Model(&models.TournamentSubscription{}).
 		Where("tournament_id = ? AND payment_status = 'paid'", id).
 		Count(&activeSubsCount)
-	// Get leaderboard entries count
+
 	var leaderboardCount int64
 	s.DB.Model(&models.LeaderboardEntry{}).
 		Where("tournament_id = ?", id).
 		Count(&leaderboardCount)
+
 	// Calculate available slots
 	availableSlots := int64(tournament.MaxSubscribers) - subsCount
 	if tournament.MaxSubscribers <= 0 {
 		availableSlots = -1 // unlimited
 	}
-	// Set computed fields
+
+	// Set the calculated fields on the tournament object
 	tournament.SubscribersCount = subsCount
 	tournament.ActiveSubscribersCount = activeSubsCount
 	tournament.AvailableSlots = availableSlots
+
+	// Return the fully populated tournament object
 	return c.JSON(tournament)
 }
 
