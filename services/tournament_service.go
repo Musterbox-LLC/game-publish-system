@@ -197,8 +197,13 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
-	// Only preload Game for list view (not photos/batches to save bandwidth)
-	s.DB.Preload("Game").Find(&tournaments)
+	// Preload Game, Photos, and the nested Batches -> Rounds structure
+	err := s.DB.Preload("Game").Preload("Photos").Preload("Batches.Rounds").Find(&tournaments).Error // <--- Updated Preload
+	if err != nil {
+		// Log the error for debugging
+		log.Printf("ERROR fetching tournaments with preloads: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
+	}
 	return c.JSON(tournaments)
 }
 
