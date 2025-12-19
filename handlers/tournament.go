@@ -35,6 +35,7 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	// Structure: Batches
 	secured.Get("/tournaments/:id/structure", tournamentService.GetTournamentStructure) 
 	secured.Post("/tournaments/:id/batches", tournamentService.CreateBatch)
+	secured.Put("/tournaments/:id/batches/:batch_id", tournamentService.UpdateBatch) 
 	secured.Put("/batches/:id", tournamentService.UpdateBatch)
 	secured.Delete("/batches/:id", tournamentService.DeleteBatch)
 	
