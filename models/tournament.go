@@ -89,6 +89,7 @@ type TournamentMatch struct {
 type TournamentRound struct {
 	ID           string    `json:"id" gorm:"primaryKey"`
 	MatchID      string    `json:"match_id" gorm:"not null;index"`
+	BatchID      string    `json:"batch_id" gorm:"not null;index"` // Add this line
 	Name         string    `json:"name"`
 	Description  string    `json:"description"`
 	SortOrder    int       `json:"sort_order" gorm:"column:sort_order;default:0"`
@@ -101,7 +102,6 @@ type TournamentRound struct {
 	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
-
 
 type TournamentPhoto struct {
 	ID           string `json:"id" gorm:"primaryKey"`

@@ -1550,9 +1550,11 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	// Example: if err := uuid.Validate(req.MatchID); err != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid match_id format"}) }
 
 	// Fetch the match to validate it exists AND belongs to a batch that belongs to the specified tournament
+	// Also retrieve the BatchID from the match
 	var match models.TournamentMatch
-	// Join the TournamentMatch with TournamentBatch to check the tournament association
+	// Join the TournamentMatch with TournamentBatch to check the tournament association and get batch_id
 	if err := s.DB.Joins("JOIN tournament_batches ON tournament_matches.batch_id = tournament_batches.id").
+		Select("tournament_matches.*", "tournament_batches.id as batch_id"). // Explicitly select match fields and batch_id
 		First(&match, "tournament_matches.id = ? AND tournament_batches.tournament_id = ?", req.MatchID, tournamentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Return 404 if the match doesn't exist or isn't associated with the tournament via its batch
@@ -1562,7 +1564,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 		log.Printf("DB Error fetching match %s for tournament %s: %v", req.MatchID, tournamentID, err)
 		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
-	// If we reach here, the match is valid and belongs to the tournament.
+	// If we reach here, the match is valid, belongs to the tournament, and its BatchID is loaded into match.BatchID.
 
 	// Parse dates from the request body
 	startDate, err := time.Parse(time.RFC3339, req.StartDate)
@@ -1582,6 +1584,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	round := &models.TournamentRound{
 		ID:           uuid.NewString(),
 		MatchID:      req.MatchID, // Use the MatchID from the request body
+		BatchID:      match.BatchID, // Use the BatchID retrieved from the match
 		Name:         req.Name,
 		Description:  req.Description,
 		SortOrder:    req.SortOrder,
@@ -1598,7 +1601,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 
 	// Save the round to the database
 	if err := s.DB.Create(round).Error; err != nil {
-		log.Printf("DB Error creating round for match %s: %v", req.MatchID, err)
+		log.Printf("DB Error creating round for match %s (batch %s): %v", req.MatchID, match.BatchID, err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to create round", "details": err.Error()})
 	}
 
