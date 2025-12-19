@@ -155,26 +155,26 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 
 	// --- Create tournament ---
 	tournament := &models.Tournament{
-		ID:             uuid.NewString(),
-		GameID:         gameID,
-		Name:           name,
-		Description:    description,
-		Rules:          rules,
-		Guidelines:     guidelines,
-		Genre:          genre,
-		GenreTags:      c.FormValue("genre_tags"),
-		MaxSubscribers: maxSubscribers,
-		EntryFee:       entryFee,
-		MainPhotoURL:   mainPhotoURL,
-		StartTime:      startTime,
-		EndTime:        endTime,
-		AcceptsWaivers: acceptsWaivers,
+		ID:              uuid.NewString(),
+		GameID:          gameID,
+		Name:            name,
+		Description:     description,
+		Rules:           rules,
+		Guidelines:      guidelines,
+		Genre:           genre,
+		GenreTags:       c.FormValue("genre_tags"),
+		MaxSubscribers:  maxSubscribers,
+		EntryFee:        entryFee,
+		MainPhotoURL:    mainPhotoURL,
+		StartTime:       startTime,
+		EndTime:         endTime,
+		AcceptsWaivers:  acceptsWaivers,
 		PrizePool:       prizePool,
 		Requirements:    processedRequirements,
 		SponsorName:     sponsorName,
 		IsFeatured:      isFeatured,
 		PublishSchedule: publishSchedule,
-		Status: "draft",
+		Status:          "draft",
 	}
 
 	// --- Save (with photos) ---
@@ -275,7 +275,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
 	// --- Prepare updates map ---
 	updates := map[string]interface{}{
-		"start_time": parsedStartTime,
+		"start_time":  parsedStartTime,
 		"name":        strings.TrimSpace(c.FormValue("name")),
 		"genre":       strings.TrimSpace(c.FormValue("genre")),
 		"genre_tags":  strings.TrimSpace(c.FormValue("genre_tags")),
@@ -462,11 +462,11 @@ func (s *TournamentService) GetAllTournamentsMini(c *fiber.Ctx) error {
 		Description      string     `json:"description,omitempty"`
 		CreatedAt        time.Time  `json:"created_at"`
 		UpdatedAt        time.Time  `json:"updated_at"`
-		Requirements    string     `json:"requirements,omitempty"`
-		Rules           string     `json:"rules,omitempty"`
-		Guidelines      string     `json:"guidelines,omitempty"`
-		AcceptsWaivers  bool       `json:"accepts_waivers"`
-		PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
+		Requirements     string     `json:"requirements,omitempty"`
+		Rules            string     `json:"rules,omitempty"`
+		Guidelines       string     `json:"guidelines,omitempty"`
+		AcceptsWaivers   bool       `json:"accepts_waivers"`
+		PublishSchedule  *time.Time `json:"publish_schedule,omitempty"`
 	}
 
 	var tournaments []TournamentMini
@@ -679,19 +679,19 @@ func (s *TournamentService) SubscribeToTournament(c *fiber.Ctx) error {
 	}
 
 	sub := models.TournamentSubscription{
-		ID:              uuid.NewString(),
-		TournamentID:    tournamentID,
-		ExternalUserID:  req.ExternalUserID,
-		UserName:        req.UserName,
-		UserAvatarURL:   subUserAvatarURL,
-		JoinedAt:        time.Now(),
-		PaymentID:       paymentID,
-		PaymentAmount:   paymentAmount,
-		PaymentStatus:   req.PaymentStatus,
-		TransactionID:   transactionID,
-		PaymentMethod:   paymentMethod,
-		PaymentAt:       paymentAt,
-		WaiverCodeUsed:  req.WaiverCode,
+		ID:               uuid.NewString(),
+		TournamentID:     tournamentID,
+		ExternalUserID:   req.ExternalUserID,
+		UserName:         req.UserName,
+		UserAvatarURL:    subUserAvatarURL,
+		JoinedAt:         time.Now(),
+		PaymentID:        paymentID,
+		PaymentAmount:    paymentAmount,
+		PaymentStatus:    req.PaymentStatus,
+		TransactionID:    transactionID,
+		PaymentMethod:    paymentMethod,
+		PaymentAt:        paymentAt,
+		WaiverCodeUsed:   req.WaiverCode,
 		WaiverAmountUsed: amountToApply,
 	}
 
@@ -837,18 +837,6 @@ func (s *TournamentService) RevokeSubscription(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "subscription revoked", "subscription": sub})
 }
 
-// getUserAvailableWaivers returns active, unexpired, non-exhausted waivers for a user
-func (s *TournamentService) getUserAvailableWaivers(userID string) ([]models.UserWaiver, error) {
-	var waivers []models.UserWaiver
-	now := time.Now()
-	query := s.DB.Where("user_id = ? AND is_active = true AND used_amount < amount", userID)
-	query = query.Where("expires_at IS NULL OR expires_at > ?", now)
-	if err := query.Find(&waivers).Error; err != nil {
-		return nil, err
-	}
-	return waivers, nil
-}
-
 // RefundSubscription updates a subscription to 'refunded' status
 func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 	type Req struct {
@@ -906,6 +894,57 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 	})
 }
 
+// GetSupportedMatchTypes returns all supported match types
+func (s *TournamentService) GetSupportedMatchTypes(c *fiber.Ctx) error {
+	matchTypes := []map[string]interface{}{
+		{
+			"id":          "SINGLE_ELIMINATION_1V1",
+			"name":        "Single Elimination 1v1",
+			"description": "Head-to-head knockout tournament",
+			"default_player_count_min": 2,
+			"default_player_count_max": 128,
+			"supports_pairing": true,
+		},
+		{
+			"id":          "DOUBLE_ELIMINATION_1V1",
+			"name":        "Double Elimination 1v1",
+			"description": "Double elimination bracket",
+			"default_player_count_min": 2,
+			"default_player_count_max": 128,
+			"supports_pairing": true,
+		},
+		{
+			"id":          "ROUND_ROBIN_1V1",
+			"name":        "Round Robin 1v1",
+			"description": "Every player plays every other player",
+			"default_player_count_min": 2,
+			"default_player_count_max": 16,
+			"supports_pairing": true,
+		},
+		{
+			"id":          "LEADERBOARD_CHALLENGE",
+			"name":        "Leaderboard Challenge",
+			"description": "Players compete for highest score",
+			"default_player_count_min": 1,
+			"default_player_count_max": 1000,
+			"supports_pairing": false,
+		},
+		{
+			"id":          "SWISS_SYSTEM",
+			"name":        "Swiss System",
+			"description": "Players with similar records face each other",
+			"default_player_count_min": 4,
+			"default_player_count_max": 128,
+			"supports_pairing": true,
+		},
+	}
+	
+	return c.JSON(fiber.Map{
+		"match_types": matchTypes,
+		"count":       len(matchTypes),
+	})
+}
+
 func (s *TournamentService) GetTournamentStructure(c *fiber.Ctx) error {
 	id := c.Params("id")
 
@@ -917,12 +956,12 @@ func (s *TournamentService) GetTournamentStructure(c *fiber.Ctx) error {
 	// Preload the entire structure: Batches -> Matches -> Rounds
 	// Ensure the order is correct: Rounds depend on Matches, Matches depend on Batches.
 	err := s.DB.Preload("Batches", func(db *gorm.DB) *gorm.DB {
-			return db.Order("sort_order ASC") // Order batches
-		}).Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
-			return db.Order("sort_order ASC") // Order matches within each batch
-		}).Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
-			return db.Order("sort_order ASC") // Order rounds within each match
-		}).First(&tournament, "id = ?", id).Error
+		return db.Order("sort_order ASC") // Order batches
+	}).Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order ASC") // Order matches within each batch
+	}).Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order ASC") // Order rounds within each match
+	}).First(&tournament, "id = ?", id).Error
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -959,10 +998,7 @@ func (s *TournamentService) CreateBatchWithMatchesAndRounds(c *fiber.Ctx) error 
 		StartDate   string     `json:"start_date"`
 		EndDate     string     `json:"end_date"`
 		Rounds      []RoundReq `json:"rounds" validate:"dive"`
-		Player1ID   string     `json:"player1_id,omitempty"`
-		Player1Name string     `json:"player1_name,omitempty"`
-		Player2ID   string     `json:"player2_id,omitempty"`
-		Player2Name string     `json:"player2_name,omitempty"`
+		MatchType   string     `json:"match_type" validate:"required"`
 	}
 
 	type BatchReq struct {
@@ -1061,10 +1097,7 @@ func (s *TournamentService) CreateBatchWithMatchesAndRounds(c *fiber.Ctx) error 
 			StartDate:   matchStartDate,
 			EndDate:     matchEndDate,
 			Status:      "pending",
-			Player1ID:   matchReq.Player1ID,
-			Player1Name: matchReq.Player1Name,
-			Player2ID:   matchReq.Player2ID,
-			Player2Name: matchReq.Player2Name,
+			MatchType:   matchReq.MatchType,
 			Rounds:      rounds,
 		}
 		matches = append(matches, match)
@@ -1115,7 +1148,6 @@ func (s *TournamentService) CreateBatchWithMatchesAndRounds(c *fiber.Ctx) error 
 	return c.Status(201).JSON(batch)
 }
 
-
 // UpdateBatch updates an existing batch.
 // It expects the tournament ID in the URL path and the batch ID in the URL path.
 // It accepts partial updates via the request body.
@@ -1127,11 +1159,11 @@ func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
 
 	// Define a struct for the request body, allowing partial updates
 	type Req struct {
-		Name        *string    `json:"name,omitempty"`
-		Description *string    `json:"description,omitempty"`
-		SortOrder   *int       `json:"sort_order,omitempty"`
-		StartDate   *string    `json:"start_date,omitempty"` // RFC3339 string
-		EndDate     *string    `json:"end_date,omitempty"`   // RFC3339 string
+		Name        *string `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
+		SortOrder   *int    `json:"sort_order,omitempty"`
+		StartDate   *string `json:"start_date,omitempty"` // RFC3339 string
+		EndDate     *string `json:"end_date,omitempty"`   // RFC3339 string
 	}
 
 	var req Req
@@ -1239,9 +1271,6 @@ func (s *TournamentService) DeleteBatch(c *fiber.Ctx) error {
 	})
 }
 
-// CreateMatch creates a new match within a batch
-// services/tournament_service.go
-
 // CreateMatch creates a new match within a batch.
 // It expects the tournament ID in the URL path and the BatchID within the request body.
 func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
@@ -1254,12 +1283,8 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 		SortOrder   int    `json:"sort_order"`
 		StartDate   string `json:"start_date"`
 		EndDate     string `json:"end_date"`
-		Player1ID   string `json:"player1_id,omitempty"`
-		Player1Name string `json:"player1_name,omitempty"`
-		Player2ID   string `json:"player2_id,omitempty"`
-		Player2Name string `json:"player2_name,omitempty"`
-		// Add BatchID field to parse from the request body
-		BatchID string `json:"batch_id" validate:"required"` 
+		MatchType   string `json:"match_type" validate:"required"`
+		BatchID     string `json:"batch_id" validate:"required"`
 	}
 
 	var req Req
@@ -1309,10 +1334,8 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 		StartDate:   startDate,
 		EndDate:     endDate,
 		Status:      "pending", // Default status
-		Player1ID:   req.Player1ID,
-		Player1Name: req.Player1Name,
-		Player2ID:   req.Player2ID,
-		Player2Name: req.Player2Name,
+		MatchType:   req.MatchType,
+		// REMOVED: Player1ID, Player1Name, Player2ID, Player2Name - will be handled by pairing service
 	}
 
 	// Save the match to the database
@@ -1325,7 +1348,6 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 	return c.Status(201).JSON(match)
 }
 
-
 // UpdateMatch updates an existing match.
 // It expects the tournament ID in the URL path and the match ID in the URL path.
 // It accepts partial updates via the request body.
@@ -1337,17 +1359,13 @@ func (s *TournamentService) UpdateMatch(c *fiber.Ctx) error {
 
 	// Define a struct for the request body, allowing partial updates
 	type Req struct {
-		Name        *string    `json:"name,omitempty"`
-		Description *string    `json:"description,omitempty"`
-		SortOrder   *int       `json:"sort_order,omitempty"`
-		Status      *string    `json:"status,omitempty"`
-		StartDate   *string    `json:"start_date,omitempty"` // RFC3339 string
-		EndDate     *string    `json:"end_date,omitempty"`   // RFC3339 string
-		Player1ID   *string    `json:"player1_id,omitempty"`
-		Player1Name *string    `json:"player1_name,omitempty"`
-		Player2ID   *string    `json:"player2_id,omitempty"`
-		Player2Name *string    `json:"player2_name,omitempty"`
-		// Note: Not updating BatchID here as it defines the match's location within the structure
+		Name        *string `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
+		SortOrder   *int    `json:"sort_order,omitempty"`
+		Status      *string `json:"status,omitempty"`
+		StartDate   *string `json:"start_date,omitempty"` // RFC3339 string
+		EndDate     *string `json:"end_date,omitempty"`   // RFC3339 string
+		MatchType   *string `json:"match_type,omitempty"`
 	}
 
 	var req Req
@@ -1383,19 +1401,9 @@ func (s *TournamentService) UpdateMatch(c *fiber.Ctx) error {
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
-	if req.Player1ID != nil {
-		updates["player1_id"] = *req.Player1ID
+	if req.MatchType != nil { 
+		updates["match_type"] = *req.MatchType
 	}
-	if req.Player1Name != nil {
-		updates["player1_name"] = *req.Player1Name
-	}
-	if req.Player2ID != nil {
-		updates["player2_id"] = *req.Player2ID
-	}
-	if req.Player2Name != nil {
-		updates["player2_name"] = *req.Player2Name
-	}
-
 	// Handle date updates with validation
 	var newStartDate, newEndDate time.Time
 	if req.StartDate != nil {
@@ -1463,14 +1471,12 @@ func (s *TournamentService) DeleteMatch(c *fiber.Ctx) error {
 	})
 }
 
-
-
 // CreateRound creates a new round within a match.
 // It expects the tournament ID in the URL path and the MatchID within the request body.
 // It automatically populates the BatchID and TournamentID based on the MatchID.
 func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	// Get the tournament ID from the URL path
-	tournamentID := c.Params("id") 
+	tournamentID := c.Params("id")
 
 	type Req struct {
 		Name         string `json:"name" validate:"required"`
@@ -1483,7 +1489,7 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 		ScoreType    string `json:"score_type"`
 		Attempts     int    `json:"attempts"`
 		// MatchID field to parse from the request body
-		MatchID string `json:"match_id" validate:"required"` 
+		MatchID string `json:"match_id" validate:"required"`
 	}
 
 	var req Req
@@ -1532,8 +1538,8 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	// Create the round object
 	round := &models.TournamentRound{
 		ID:           uuid.NewString(),
-		MatchID:      req.MatchID, // Use the MatchID from the request body
-		BatchID:      match.BatchID, // Use the BatchID fetched from the match
+		MatchID:      req.MatchID,             // Use the MatchID from the request body
+		BatchID:      match.BatchID,           // Use the BatchID fetched from the match
 		TournamentID: match.BatchTournamentID, // Use the TournamentID fetched from the batch
 		Name:         req.Name,
 		Description:  req.Description,
@@ -1559,8 +1565,6 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	return c.Status(201).JSON(round)
 }
 
-
-
 // UpdateRound updates an existing round.
 // It expects the tournament ID in the URL path and the round ID in the URL path.
 // It accepts partial updates via the request body.
@@ -1572,15 +1576,15 @@ func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
 
 	// Define a struct for the request body, allowing partial updates
 	type Req struct {
-		Name         *string    `json:"name,omitempty"`
-		Description  *string    `json:"description,omitempty"`
-		SortOrder    *int       `json:"sort_order,omitempty"`
-		Status       *string    `json:"status,omitempty"`
-		StartDate    *string    `json:"start_date,omitempty"` // RFC3339 string
-		EndDate      *string    `json:"end_date,omitempty"`   // RFC3339 string
-		DurationMins *int       `json:"duration_mins,omitempty"`
-		ScoreType    *string    `json:"score_type,omitempty"`
-		Attempts     *int       `json:"attempts,omitempty"`
+		Name         *string `json:"name,omitempty"`
+		Description  *string `json:"description,omitempty"`
+		SortOrder    *int    `json:"sort_order,omitempty"`
+		Status       *string `json:"status,omitempty"`
+		StartDate    *string `json:"start_date,omitempty"` // RFC3339 string
+		EndDate      *string `json:"end_date,omitempty"`   // RFC3339 string
+		DurationMins *int    `json:"duration_mins,omitempty"`
+		ScoreType    *string `json:"score_type,omitempty"`
+		Attempts     *int    `json:"attempts,omitempty"`
 		// Note: Not updating MatchID, BatchID, or TournamentID here as they define the round's location within the structure
 	}
 
@@ -1764,19 +1768,19 @@ func (s *TournamentService) DeleteTournament(c *fiber.Ctx) error {
 			Delete(&models.TournamentRound{}).Error; err != nil {
 			return err
 		}
-		
+
 		// 2. TournamentMatch (depends on Batch)
 		if err := tx.Where("batch_id IN (SELECT id FROM tournament_batches WHERE tournament_id = ?)", id).
 			Delete(&models.TournamentMatch{}).Error; err != nil {
 			return err
 		}
-		
+
 		// 3. TournamentBatch
 		if err := tx.Where("tournament_id = ?", id).
 			Delete(&models.TournamentBatch{}).Error; err != nil {
 			return err
 		}
-		
+
 		// 4. Other dependent tables
 		if err := tx.Where("tournament_id = ?", id).
 			Delete(&models.TournamentPhoto{}).Error; err != nil {
@@ -1790,7 +1794,7 @@ func (s *TournamentService) DeleteTournament(c *fiber.Ctx) error {
 			Delete(&models.LeaderboardEntry{}).Error; err != nil {
 			return err
 		}
-		
+
 		// 5. Finally delete the tournament
 		result := tx.Delete(&models.Tournament{}, "id = ?", id)
 		if result.Error != nil {

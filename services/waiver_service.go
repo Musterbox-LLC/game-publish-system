@@ -166,6 +166,17 @@ func (s *TournamentService) CreateWaiver(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(waiver)
 }
 
+// getUserAvailableWaivers returns active, unexpired, non-exhausted waivers for a user
+func (s *TournamentService) getUserAvailableWaivers(userID string) ([]models.UserWaiver, error) {
+	var waivers []models.UserWaiver
+	now := time.Now()
+	query := s.DB.Where("user_id = ? AND is_active = true AND used_amount < amount", userID)
+	query = query.Where("expires_at IS NULL OR expires_at > ?", now)
+	if err := query.Find(&waivers).Error; err != nil {
+		return nil, err
+	}
+	return waivers, nil
+}
 // RedeemWaiver allows a user to claim part of a waiver (e.g., before payment).
 // Returns the effective amount applied and updated waiver.
 func (s *TournamentService) RedeemWaiver(c *fiber.Ctx) error {

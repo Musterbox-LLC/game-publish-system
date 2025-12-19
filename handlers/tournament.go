@@ -6,15 +6,15 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func SetupTournamentRoutes(app *fiber.App, tournamentService *services.TournamentService) {
-	// 🔓 Public routes — Gateway-authenticated but no user context required
+func SetupTournamentRoutes(app *fiber.App, tournamentService *services.TournamentService, pairingService *services.PairingService) {
+	// 🔓 Public routes
 	app.Get("/tournaments", tournamentService.GetAllTournaments)
 	app.Get("/tournaments/mini", tournamentService.GetAllTournamentsMini)
 	app.Get("/tournaments/:id", tournamentService.GetTournamentByID)
-	// ⚠️ `/users/search` is public, but GatewayAuthMiddleware ensures only Gateway can reach it
+	app.Get("/match-types", tournamentService.GetSupportedMatchTypes)
 	app.Get("/users/search", tournamentService.SearchUsers)
 
-	// 🔐 Authenticated routes — require X-User-ID etc.
+	// 🔐 Authenticated routes
 	secured := app.Group("/", middleware.UserContextMiddleware())
 	
 	// Tournament CRUD
@@ -28,18 +28,17 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	secured.Get("/tournaments/:id/subscribers", tournamentService.GetTournamentSubscribers)
 	
 	// Subscription management
-	secured.Patch("/tournaments/:tournament_id/subscribers/:user_id/status", tournamentService.SuspendSubscription)
+	secured.Patch("/tournaments/:tournament_id/subscribers/:user_id/suspend", tournamentService.SuspendSubscription)
 	secured.Post("/tournaments/:tournament_id/subscribers/:user_id/revoke", tournamentService.RevokeSubscription)
-	secured.Post("/tournaments/:id/subscribers/:user_id/refund", tournamentService.RefundSubscription)
+	secured.Post("/tournaments/:tournament_id/subscribers/:user_id/refund", tournamentService.RefundSubscription)
 
 	// Structure: Batches
-	secured.Get("/tournaments/:id/structure", tournamentService.GetTournamentStructure) 
+	secured.Get("/tournaments/:id/structure", tournamentService.GetTournamentStructure)
 	secured.Post("/tournaments/:id/batches", tournamentService.CreateBatch)
-	secured.Put("/tournaments/:id/batches/:batch_id", tournamentService.UpdateBatch) 
-	secured.Put("/batches/:id", tournamentService.UpdateBatch)
+	secured.Put("/tournaments/:id/batches/:batch_id", tournamentService.UpdateBatch)
 	secured.Delete("/batches/:id", tournamentService.DeleteBatch)
 	
-	// Structure: Batch with matches and rounds (complete structure)
+	// Structure: Batch with matches and rounds
 	secured.Post("/tournaments/:id/batches-with-matches", tournamentService.CreateBatchWithMatchesAndRounds)
 	
 	// Structure: Matches
@@ -48,25 +47,32 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	secured.Delete("/tournaments/:id/matches/:match_id", tournamentService.DeleteMatch)
 	
 	// Structure: Rounds
-	secured.Post("/tournaments/:id/rounds", tournamentService.CreateRound)
+	secured.Post("/tournaments/:id/matches/:match_id/rounds", tournamentService.CreateRound)
 	secured.Put("/tournaments/:id/rounds/:round_id", tournamentService.UpdateRound)
 	secured.Delete("/tournaments/:id/rounds/:round_id", tournamentService.DeleteRound)
 
+	// Pairing endpoints
+	secured.Post("/matches/:match_id/pairings", pairingService.GeneratePairings)
+	secured.Put("/pairings/:pairing_id", pairingService.UpdatePairings)
+	secured.Post("/pairings/:pairing_id/approve", pairingService.ApprovePairings)
+	secured.Post("/pairings/:pairing_id/publish", pairingService.PublishPairings)
+	secured.Post("/pairings/:pairing_id/reject", pairingService.RejectPairings)
+	secured.Get("/matches/:match_id/pairings/status", pairingService.GetPairingStatus)
+	secured.Get("/matches/:match_id/pairings/history", pairingService.GetPairingHistory)
+
 	// Waiver endpoints
-	secured.Get("/waivers", tournamentService.GetAllWaivers)
-	secured.Get("/users/me/waivers", tournamentService.GetUserWaiversEndpoint)            
+	secured.Get("/users/me/waivers", tournamentService.GetUserWaiversEndpoint)
 	secured.Get("/users/me/waivers/counts", tournamentService.GetUserWaiverCountsEndpoint)
 	secured.Patch("/waivers/:id/claimed", tournamentService.MarkWaiverAsClaimedEndpoint)
-	secured.Patch("/waivers/:id/viewed", tournamentService.MarkWaiverAsViewedEndpoint)    
+	secured.Patch("/waivers/:id/viewed", tournamentService.MarkWaiverAsViewedEndpoint)
 	secured.Patch("/waivers/:id/redeemed", tournamentService.MarkWaiverAsRedeemedEndpoint)
 	secured.Post("/waivers/:id/redeem", tournamentService.RedeemWaiver)
-	secured.Put("/waivers/:id", tournamentService.UpdateWaiver)
-	secured.Delete("/waivers/:id", tournamentService.DeleteWaiver)
 	secured.Get("/users/:user_id/waivers/available", tournamentService.GetUserAvailableWaiversEndpoint)
 
 	// 🔒 Admin-only routes
-	admin := app.Group("/s/admin", middleware.UserContextMiddleware())
+	admin := secured.Group("/admin")
 	admin.Post("/waivers", tournamentService.CreateWaiver)
-	admin.Get("/waivers", tournamentService.GetAllWaivers) // sensitive: all waivers
-	admin.Put("/waivers/:id",  tournamentService.UpdateWaiver)
+	admin.Get("/waivers", tournamentService.GetAllWaivers)
+	admin.Put("/waivers/:id", tournamentService.UpdateWaiver)
+	admin.Delete("/waivers/:id", tournamentService.DeleteWaiver)
 }
