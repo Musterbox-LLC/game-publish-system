@@ -906,6 +906,37 @@ func (s *TournamentService) RefundSubscription(c *fiber.Ctx) error {
 	})
 }
 
+func (s *TournamentService) GetTournamentStructure(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	// Validate ID format if necessary (e.g., UUID)
+	// Example using uuid package: if err := uuid.Validate(id); err != nil { /* return error */ }
+
+	var tournament models.Tournament
+
+	// Preload the entire structure: Batches -> Matches -> Rounds
+	// Ensure the order is correct: Rounds depend on Matches, Matches depend on Batches.
+	err := s.DB.Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC") // Order batches
+		}).Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC") // Order matches within each batch
+		}).Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC") // Order rounds within each match
+		}).First(&tournament, "id = ?", id).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Tournament not found"})
+		}
+		log.Printf("DB Error fetching tournament structure %s: %v", id, err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+	}
+
+	// Return the tournament object, which now contains the nested Batches, Matches, and Rounds
+	// The JSON marshalling will handle the nested structure based on your model definitions.
+	return c.JSON(tournament)
+}
+
 // CreateBatchWithMatchesAndRounds creates a batch, matches, and rounds in a single atomic operation
 func (s *TournamentService) CreateBatchWithMatchesAndRounds(c *fiber.Ctx) error {
 	tournamentID := c.Params("id")
