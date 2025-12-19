@@ -1116,204 +1116,100 @@ func (s *TournamentService) CreateBatchWithMatchesAndRounds(c *fiber.Ctx) error 
 }
 
 
-// UpdateBatch updates an existing batch and optionally its associated matches and rounds
+// UpdateBatch updates an existing batch.
+// It expects the tournament ID in the URL path and the batch ID in the URL path.
+// It accepts partial updates via the request body.
 func (s *TournamentService) UpdateBatch(c *fiber.Ctx) error {
-	id := c.Params("id")
+	// Get the tournament ID from the URL path
+	tournamentID := c.Params("id")
+	// Get the batch ID from the URL path
+	batchID := c.Params("batch_id")
 
-	type RoundUpdateReq struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		SortOrder    int    `json:"sort_order"`
-		StartDate    string `json:"start_date"`
-		EndDate      string `json:"end_date"`
-		DurationMins int    `json:"duration_mins"`
-		ScoreType    string `json:"score_type"`
-		Attempts     int    `json:"attempts"`
-		ToDelete     bool   `json:"to_delete"`
+	// Define a struct for the request body, allowing partial updates
+	type Req struct {
+		Name        *string    `json:"name,omitempty"`
+		Description *string    `json:"description,omitempty"`
+		SortOrder   *int       `json:"sort_order,omitempty"`
+		StartDate   *string    `json:"start_date,omitempty"` // RFC3339 string
+		EndDate     *string    `json:"end_date,omitempty"`   // RFC3339 string
 	}
 
-	type MatchUpdateReq struct {
-		ID           string           `json:"id"`
-		Name         string           `json:"name"`
-		Description  string           `json:"description"`
-		SortOrder    int              `json:"sort_order"`
-		StartDate    string           `json:"start_date"`
-		EndDate      string           `json:"end_date"`
-		Status       string           `json:"status"`
-		Player1ID    string           `json:"player1_id,omitempty"`
-		Player1Name  string           `json:"player1_name,omitempty"`
-		Player1Score int64            `json:"player1_score,omitempty"`
-		Player2ID    string           `json:"player2_id,omitempty"`
-		Player2Name  string           `json:"player2_name,omitempty"`
-		Player2Score int64            `json:"player2_score,omitempty"`
-		WinnerID     string           `json:"winner_id,omitempty"`
-		WinnerName   string           `json:"winner_name,omitempty"`
-		Rounds       []RoundUpdateReq `json:"rounds,omitempty"`
-		ToDelete     bool             `json:"to_delete"`
-	}
-
-	type BatchUpdateReq struct {
-		Name        string           `json:"name"`
-		Description string           `json:"description"`
-		SortOrder   int              `json:"sort_order"`
-		StartDate   string           `json:"start_date"`
-		EndDate     string           `json:"end_date"`
-		Matches     []MatchUpdateReq `json:"matches,omitempty"`
-	}
-
-	var req BatchUpdateReq
+	var req Req
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
 	}
 
-	var batch models.TournamentBatch
-	if err := s.DB.Preload("Matches").Preload("Matches.Rounds").First(&batch, "id = ?", id).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
+	// Validate the incoming BatchID format if necessary (e.g., UUID)
+	// Example: if err := uuid.Validate(batchID); err != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid batch_id format"}) }
+
+	// Fetch the existing batch to ensure it exists and belongs to the tournament
+	var existingBatch models.TournamentBatch
+	if err := s.DB.First(&existingBatch, "id = ? AND tournament_id = ?", batchID, tournamentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
+		}
+		log.Printf("DB Error fetching batch %s for tournament %s: %v", batchID, tournamentID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
 
-	// Update batch fields
-	if req.Name != "" {
-		batch.Name = req.Name
-	}
-	if req.Description != "" {
-		batch.Description = req.Description
-	}
-	batch.SortOrder = req.SortOrder
+	// Prepare updates map
+	updates := make(map[string]interface{})
 
-	if req.StartDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.StartDate); err == nil {
-			batch.StartDate = t
-		} else {
+	// Apply updates from the request body if provided
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.SortOrder != nil {
+		updates["sort_order"] = *req.SortOrder
+	}
+
+	// Handle date updates with validation
+	var newStartDate, newEndDate time.Time
+	if req.StartDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.StartDate)
+		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid start_date"})
 		}
+		newStartDate = parsedDate
+		updates["start_date"] = newStartDate
+	} else {
+		newStartDate = existingBatch.StartDate // Use existing if not updating
 	}
-	if req.EndDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.EndDate); err == nil {
-			batch.EndDate = t
-		} else {
+
+	if req.EndDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.EndDate)
+		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
 		}
+		newEndDate = parsedDate
+		updates["end_date"] = newEndDate
+	} else {
+		newEndDate = existingBatch.EndDate // Use existing if not updating
 	}
 
-	// Perform updates in a transaction
-	err := s.DB.Transaction(func(tx *gorm.DB) error {
-		// 1. Update the batch itself
-		if err := tx.Save(&batch).Error; err != nil {
-			return err
+	// Validate date range if either date is being updated
+	if req.StartDate != nil || req.EndDate != nil {
+		if !newEndDate.IsZero() && !newStartDate.IsZero() && !newEndDate.After(newStartDate) {
+			return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
 		}
-
-		// Handle matches updates
-		for _, matchReq := range req.Matches {
-			if matchReq.ToDelete {
-				// Delete match and its rounds
-				if err := tx.Where("match_id = ?", matchReq.ID).Delete(&models.TournamentRound{}).Error; err != nil {
-					return err
-				}
-				if err := tx.Where("id = ?", matchReq.ID).Delete(&models.TournamentMatch{}).Error; err != nil {
-					return err
-				}
-				continue
-			}
-
-			if matchReq.ID == "" {
-				// Create new match
-				var matchStartDate, matchEndDate time.Time
-				var parseErr error
-				
-				if matchReq.StartDate != "" {
-					matchStartDate, parseErr = time.Parse(time.RFC3339, matchReq.StartDate)
-					if parseErr != nil {
-						return parseErr
-					}
-				}
-				if matchReq.EndDate != "" {
-					matchEndDate, parseErr = time.Parse(time.RFC3339, matchReq.EndDate)
-					if parseErr != nil {
-						return parseErr
-					}
-				}
-
-				newMatch := models.TournamentMatch{
-					ID:           uuid.NewString(),
-					BatchID:      batch.ID,
-					Name:         matchReq.Name,
-					Description:  matchReq.Description,
-					SortOrder:    matchReq.SortOrder,
-					StartDate:    matchStartDate,
-					EndDate:      matchEndDate,
-					Status:       matchReq.Status,
-					Player1ID:    matchReq.Player1ID,
-					Player1Name:  matchReq.Player1Name,
-					Player1Score: matchReq.Player1Score,
-					Player2ID:    matchReq.Player2ID,
-					Player2Name:  matchReq.Player2Name,
-					Player2Score: matchReq.Player2Score,
-					WinnerID:     matchReq.WinnerID,
-					WinnerName:   matchReq.WinnerName,
-				}
-				if err := tx.Create(&newMatch).Error; err != nil {
-					return err
-				}
-			} else {
-				// Update existing match
-				var match models.TournamentMatch
-				if err := tx.First(&match, "id = ?", matchReq.ID).Error; err != nil {
-					return err
-				}
-
-				if matchReq.Name != "" {
-					match.Name = matchReq.Name
-				}
-				if matchReq.Description != "" {
-					match.Description = matchReq.Description
-				}
-				match.SortOrder = matchReq.SortOrder
-				if matchReq.Status != "" {
-					match.Status = matchReq.Status
-				}
-				match.Player1ID = matchReq.Player1ID
-				match.Player1Name = matchReq.Player1Name
-				match.Player1Score = matchReq.Player1Score
-				match.Player2ID = matchReq.Player2ID
-				match.Player2Name = matchReq.Player2Name
-				match.Player2Score = matchReq.Player2Score
-				match.WinnerID = matchReq.WinnerID
-				match.WinnerName = matchReq.WinnerName
-
-				if matchReq.StartDate != "" {
-					if t, err := time.Parse(time.RFC3339, matchReq.StartDate); err == nil {
-						match.StartDate = t
-					}
-				}
-				if matchReq.EndDate != "" {
-					if t, err := time.Parse(time.RFC3339, matchReq.EndDate); err == nil {
-						match.EndDate = t
-					}
-				}
-
-				if err := tx.Save(&match).Error; err != nil {
-					return err
-				}
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		log.Printf("ERROR updating batch %s: %v", id, err)
-		return c.Status(500).JSON(fiber.Map{"error": "update failed", "details": err.Error()})
 	}
 
-	// Fetch the updated batch with matches and rounds for the response
-	s.DB.Preload("Matches", func(db *gorm.DB) *gorm.DB {
-		return db.Order("\"sort_order\" ASC")
-	}).Preload("Matches.Rounds", func(db *gorm.DB) *gorm.DB {
-		return db.Order("\"sort_order\" ASC")
-	}).First(&batch, "id = ?", id)
+	// Perform the update
+	if err := s.DB.Model(&existingBatch).Updates(updates).Error; err != nil {
+		log.Printf("DB Error updating batch %s: %v", batchID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update batch", "details": err.Error()})
+	}
 
-	return c.JSON(batch)
+	// Fetch the updated batch to return
+	if err := s.DB.First(&existingBatch, "id = ?", batchID).Error; err != nil {
+		log.Printf("DB Error fetching updated batch %s after update: %v", batchID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated batch"})
+	}
+
+	return c.JSON(existingBatch)
 }
 
 // DeleteBatch deletes a batch and all its associated matches and rounds
@@ -1429,74 +1325,121 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 	return c.Status(201).JSON(match)
 }
 
-// UpdateMatch updates an existing match
-func (s *TournamentService) UpdateMatch(c *fiber.Ctx) error {
-	id := c.Params("id")
 
+// UpdateMatch updates an existing match.
+// It expects the tournament ID in the URL path and the match ID in the URL path.
+// It accepts partial updates via the request body.
+func (s *TournamentService) UpdateMatch(c *fiber.Ctx) error {
+	// Get the tournament ID from the URL path
+	tournamentID := c.Params("id")
+	// Get the match ID from the URL path
+	matchID := c.Params("match_id")
+
+	// Define a struct for the request body, allowing partial updates
 	type Req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		SortOrder   int    `json:"sort_order"`
-		StartDate   string `json:"start_date"`
-		EndDate     string `json:"end_date"`
-		Status      string `json:"status"`
-		Player1ID   string `json:"player1_id,omitempty"`
-		Player1Name string `json:"player1_name,omitempty"`
-		Player1Score int64 `json:"player1_score,omitempty"`
-		Player2ID   string `json:"player2_id,omitempty"`
-		Player2Name string `json:"player2_name,omitempty"`
-		Player2Score int64 `json:"player2_score,omitempty"`
-		WinnerID    string `json:"winner_id,omitempty"`
-		WinnerName  string `json:"winner_name,omitempty"`
+		Name        *string    `json:"name,omitempty"`
+		Description *string    `json:"description,omitempty"`
+		SortOrder   *int       `json:"sort_order,omitempty"`
+		Status      *string    `json:"status,omitempty"`
+		StartDate   *string    `json:"start_date,omitempty"` // RFC3339 string
+		EndDate     *string    `json:"end_date,omitempty"`   // RFC3339 string
+		Player1ID   *string    `json:"player1_id,omitempty"`
+		Player1Name *string    `json:"player1_name,omitempty"`
+		Player2ID   *string    `json:"player2_id,omitempty"`
+		Player2Name *string    `json:"player2_name,omitempty"`
+		// Note: Not updating BatchID here as it defines the match's location within the structure
 	}
 
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
 	}
 
-	var match models.TournamentMatch
-	if err := s.DB.First(&match, "id = ?", id).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "match not found"})
+	// Fetch the existing match to ensure it exists and belongs to a batch within the tournament
+	var existingMatch models.TournamentMatch
+	// Join with TournamentBatch to verify the match belongs to the specified tournament
+	if err := s.DB.Joins("JOIN tournament_batches ON tournament_matches.batch_id = tournament_batches.id").
+		First(&existingMatch, "tournament_matches.id = ? AND tournament_batches.tournament_id = ?", matchID, tournamentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "match not found"})
+		}
+		log.Printf("DB Error fetching match %s for tournament %s: %v", matchID, tournamentID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
 
-	// Update fields
-	if req.Name != "" {
-		match.Name = req.Name
-	}
-	if req.Description != "" {
-		match.Description = req.Description
-	}
-	match.SortOrder = req.SortOrder
+	// Prepare updates map
+	updates := make(map[string]interface{})
 
-	if req.StartDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.StartDate); err == nil {
-			match.StartDate = t
+	// Apply updates from the request body if provided
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.SortOrder != nil {
+		updates["sort_order"] = *req.SortOrder
+	}
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+	if req.Player1ID != nil {
+		updates["player1_id"] = *req.Player1ID
+	}
+	if req.Player1Name != nil {
+		updates["player1_name"] = *req.Player1Name
+	}
+	if req.Player2ID != nil {
+		updates["player2_id"] = *req.Player2ID
+	}
+	if req.Player2Name != nil {
+		updates["player2_name"] = *req.Player2Name
+	}
+
+	// Handle date updates with validation
+	var newStartDate, newEndDate time.Time
+	if req.StartDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.StartDate)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid start_date"})
+		}
+		newStartDate = parsedDate
+		updates["start_date"] = newStartDate
+	} else {
+		newStartDate = existingMatch.StartDate // Use existing if not updating
+	}
+
+	if req.EndDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.EndDate)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
+		}
+		newEndDate = parsedDate
+		updates["end_date"] = newEndDate
+	} else {
+		newEndDate = existingMatch.EndDate // Use existing if not updating
+	}
+
+	// Validate date range if either date is being updated
+	if req.StartDate != nil || req.EndDate != nil {
+		if !newEndDate.IsZero() && !newStartDate.IsZero() && !newEndDate.After(newStartDate) {
+			return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
 		}
 	}
-	if req.EndDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.EndDate); err == nil {
-			match.EndDate = t
-		}
-	}
-	if req.Status != "" {
-		match.Status = req.Status
-	}
-	
-	match.Player1ID = req.Player1ID
-	match.Player1Name = req.Player1Name
-	match.Player1Score = req.Player1Score
-	match.Player2ID = req.Player2ID
-	match.Player2Name = req.Player2Name
-	match.Player2Score = req.Player2Score
-	match.WinnerID = req.WinnerID
-	match.WinnerName = req.WinnerName
 
-	if err := s.DB.Save(&match).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
+	// Perform the update
+	if err := s.DB.Model(&existingMatch).Updates(updates).Error; err != nil {
+		log.Printf("DB Error updating match %s: %v", matchID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update match", "details": err.Error()})
 	}
 
-	return c.JSON(match)
+	// Fetch the updated match to return
+	if err := s.DB.First(&existingMatch, "id = ?", matchID).Error; err != nil {
+		log.Printf("DB Error fetching updated match %s after update: %v", matchID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated match"})
+	}
+
+	return c.JSON(existingMatch)
 }
 
 // DeleteMatch deletes a match and its associated rounds
@@ -1616,78 +1559,123 @@ func (s *TournamentService) CreateRound(c *fiber.Ctx) error {
 	return c.Status(201).JSON(round)
 }
 
-// UpdateRound updates a single round
-func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
-	id := c.Params("id")
 
+
+// UpdateRound updates an existing round.
+// It expects the tournament ID in the URL path and the round ID in the URL path.
+// It accepts partial updates via the request body.
+func (s *TournamentService) UpdateRound(c *fiber.Ctx) error {
+	// Get the tournament ID from the URL path
+	tournamentID := c.Params("id")
+	// Get the round ID from the URL path
+	roundID := c.Params("round_id")
+
+	// Define a struct for the request body, allowing partial updates
 	type Req struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		SortOrder    int    `json:"sort_order"`
-		StartDate    string `json:"start_date"`
-		EndDate      string `json:"end_date"`
-		DurationMins int    `json:"duration_mins"`
-		Status       string `json:"status"`
-		ScoreType    string `json:"score_type"`
-		Attempts     int    `json:"attempts"`
+		Name         *string    `json:"name,omitempty"`
+		Description  *string    `json:"description,omitempty"`
+		SortOrder    *int       `json:"sort_order,omitempty"`
+		Status       *string    `json:"status,omitempty"`
+		StartDate    *string    `json:"start_date,omitempty"` // RFC3339 string
+		EndDate      *string    `json:"end_date,omitempty"`   // RFC3339 string
+		DurationMins *int       `json:"duration_mins,omitempty"`
+		ScoreType    *string    `json:"score_type,omitempty"`
+		Attempts     *int       `json:"attempts,omitempty"`
+		// Note: Not updating MatchID, BatchID, or TournamentID here as they define the round's location within the structure
 	}
 
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
 	}
 
-	var round models.TournamentRound
-	if err := s.DB.First(&round, "id = ?", id).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "round not found"})
+	// Validate the incoming RoundID format if necessary (e.g., UUID)
+	// Example: if err := uuid.Validate(roundID); err != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid round_id format"}) }
+
+	// Fetch the existing round to ensure it exists and belongs to a match within the tournament
+	var existingRound models.TournamentRound
+	// Join with TournamentMatch and TournamentBatch to verify the round belongs to the specified tournament
+	if err := s.DB.Table("tournament_rounds").
+		Joins("JOIN tournament_matches ON tournament_rounds.match_id = tournament_matches.id").
+		Joins("JOIN tournament_batches ON tournament_matches.batch_id = tournament_batches.id").
+		First(&existingRound, "tournament_rounds.id = ? AND tournament_batches.tournament_id = ?", roundID, tournamentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "round not found"})
+		}
+		log.Printf("DB Error fetching round %s for tournament %s: %v", roundID, tournamentID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
 
-	// Update fields if provided in the request
-	if req.Name != "" {
-		round.Name = req.Name
-	}
-	if req.Description != "" {
-		round.Description = req.Description
-	}
-	round.SortOrder = req.SortOrder
+	// Prepare updates map
+	updates := make(map[string]interface{})
 
-	if req.StartDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.StartDate); err == nil {
-			round.StartDate = t
-		} else {
+	// Apply updates from the request body if provided
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.SortOrder != nil {
+		updates["sort_order"] = *req.SortOrder
+	}
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+	if req.DurationMins != nil {
+		updates["duration_mins"] = *req.DurationMins
+	}
+	if req.ScoreType != nil {
+		updates["score_type"] = *req.ScoreType
+	}
+	if req.Attempts != nil {
+		updates["attempts"] = *req.Attempts
+	}
+
+	// Handle date updates with validation
+	var newStartDate, newEndDate time.Time
+	if req.StartDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.StartDate)
+		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid start_date"})
 		}
+		newStartDate = parsedDate
+		updates["start_date"] = newStartDate
+	} else {
+		newStartDate = existingRound.StartDate // Use existing if not updating
 	}
-	if req.EndDate != "" {
-		if t, err := time.Parse(time.RFC3339, req.EndDate); err == nil {
-			round.EndDate = t
-		} else {
+
+	if req.EndDate != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.EndDate)
+		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid end_date"})
 		}
-	}
-	if req.DurationMins != 0 {
-		round.DurationMins = req.DurationMins
-	}
-	if req.Status != "" {
-		round.Status = req.Status
-	}
-	if req.ScoreType != "" {
-		round.ScoreType = req.ScoreType
-	}
-	if req.Attempts != 0 {
-		round.Attempts = req.Attempts
+		newEndDate = parsedDate
+		updates["end_date"] = newEndDate
+	} else {
+		newEndDate = existingRound.EndDate // Use existing if not updating
 	}
 
-	// Validate dates after potential updates
-	if !round.EndDate.After(round.StartDate) && !round.EndDate.IsZero() {
-		return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
+	// Validate date range if either date is being updated
+	if req.StartDate != nil || req.EndDate != nil {
+		if !newEndDate.IsZero() && !newStartDate.IsZero() && !newEndDate.After(newStartDate) {
+			return c.Status(400).JSON(fiber.Map{"error": "end_date must be after start_date"})
+		}
 	}
 
-	if err := s.DB.Save(&round).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "update failed"})
+	// Perform the update
+	if err := s.DB.Model(&existingRound).Updates(updates).Error; err != nil {
+		log.Printf("DB Error updating round %s: %v", roundID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update round", "details": err.Error()})
 	}
 
-	return c.JSON(round)
+	// Fetch the updated round to return
+	if err := s.DB.First(&existingRound, "id = ?", roundID).Error; err != nil {
+		log.Printf("DB Error fetching updated round %s after update: %v", roundID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated round"})
+	}
+
+	return c.JSON(existingRound)
 }
 
 // DeleteRound deletes a single round
