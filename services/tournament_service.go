@@ -1344,8 +1344,13 @@ func (s *TournamentService) DeleteBatch(c *fiber.Ctx) error {
 }
 
 // CreateMatch creates a new match within a batch
+// services/tournament_service.go
+
+// CreateMatch creates a new match within a batch.
+// It expects the tournament ID in the URL path and the BatchID within the request body.
 func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
-	batchID := c.Params("batch_id")
+	// Get the tournament ID from the URL path
+	tournamentID := c.Params("id")
 
 	type Req struct {
 		Name        string `json:"name" validate:"required"`
@@ -1357,20 +1362,32 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 		Player1Name string `json:"player1_name,omitempty"`
 		Player2ID   string `json:"player2_id,omitempty"`
 		Player2Name string `json:"player2_name,omitempty"`
+		// Add BatchID field to parse from the request body
+		BatchID string `json:"batch_id" validate:"required"` 
 	}
 
 	var req Req
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON", "details": err.Error()})
 	}
 
-	// Fetch batch to verify it exists
+	// Validate the incoming BatchID format if necessary (e.g., UUID)
+	// Example: if err := uuid.Validate(req.BatchID); err != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid batch_id format"}) }
+
+	// Validate that the batch exists AND belongs to the specified tournament
 	var batch models.TournamentBatch
-	if err := s.DB.First(&batch, "id = ?", batchID).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
+	if err := s.DB.First(&batch, "id = ? AND tournament_id = ?", req.BatchID, tournamentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Return 404 if the batch doesn't exist or doesn't belong to the tournament
+			return c.Status(404).JSON(fiber.Map{"error": "batch not found"})
+		}
+		// Log other DB errors
+		log.Printf("DB Error fetching batch %s for tournament %s: %v", req.BatchID, tournamentID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
+	// If we reach here, the batch is valid and belongs to the tournament.
 
-	// Parse dates
+	// Parse dates from the request body
 	var startDate, endDate time.Time
 	var err error
 	if req.StartDate != "" {
@@ -1386,25 +1403,29 @@ func (s *TournamentService) CreateMatch(c *fiber.Ctx) error {
 		}
 	}
 
+	// Create the match object
 	match := &models.TournamentMatch{
 		ID:          uuid.NewString(),
-		BatchID:     batchID,
+		BatchID:     req.BatchID, // Use the BatchID from the request body
 		Name:        req.Name,
 		Description: req.Description,
 		SortOrder:   req.SortOrder,
 		StartDate:   startDate,
 		EndDate:     endDate,
-		Status:      "pending",
+		Status:      "pending", // Default status
 		Player1ID:   req.Player1ID,
 		Player1Name: req.Player1Name,
 		Player2ID:   req.Player2ID,
 		Player2Name: req.Player2Name,
 	}
 
+	// Save the match to the database
 	if err := s.DB.Create(match).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "failed to create match"})
+		log.Printf("DB Error creating match for batch %s: %v", req.BatchID, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to create match", "details": err.Error()})
 	}
 
+	// Return the created match
 	return c.Status(201).JSON(match)
 }
 
