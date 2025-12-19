@@ -89,7 +89,8 @@ type TournamentMatch struct {
 type TournamentRound struct {
 	ID           string    `json:"id" gorm:"primaryKey"`
 	MatchID      string    `json:"match_id" gorm:"not null;index"`
-	BatchID      string    `json:"batch_id" gorm:"not null;index"` // Add this line
+	BatchID      string    `json:"batch_id" gorm:"not null;index"` 
+	TournamentID string    `json:"tournament_id" gorm:"not null;index"` 
 	Name         string    `json:"name"`
 	Description  string    `json:"description"`
 	SortOrder    int       `json:"sort_order" gorm:"column:sort_order;default:0"`
