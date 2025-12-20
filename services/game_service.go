@@ -35,6 +35,11 @@ type MinimalGame struct {
 	MainLogoURL   string  `json:"main_logo_url"`
 	Platform      string  `json:"platform"`
 	AverageRating float64 `json:"average_rating"` // ✅ Add to minimal
+
+	PlayLink      string `json:"play_link,omitempty"`
+	PlayStoreURL  string `json:"play_store_url,omitempty"`
+	AppStoreURL   string `json:"app_store_url,omitempty"`
+	PCDownloadURL string `json:"pc_download_url,omitempty"`
 }
 
 // UploadGame creates a new **draft** game with core file, media, and platform links.
@@ -199,12 +204,24 @@ func (s *GameService) GetGameByID(c *fiber.Ctx) error {
 }
 
 // GetMinimalGames returns lightweight game list (published only) with average ratings
+// GetMinimalGames returns lightweight game list (published only) with average ratings and platform links
 func (s *GameService) GetMinimalGames(c *fiber.Ctx) error {
 	fmt.Println("GetMinimalGames called")
 
 	var games []models.Game
-	if err := s.DB.Select("id, name, main_logo_url, platform, average_rating").
-		Where("status = ?", "published").Find(&games).Error; err != nil {
+	if err := s.DB.Select(`
+		id, 
+		name, 
+		main_logo_url, 
+		platform, 
+		average_rating,
+		play_link,
+		play_store_url,
+		app_store_url,
+		pc_download_url
+	`).
+		Where("status = ?", "published").
+		Find(&games).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch games"})
 	}
 
@@ -216,12 +233,19 @@ func (s *GameService) GetMinimalGames(c *fiber.Ctx) error {
 			MainLogoURL:   game.MainLogoURL,
 			Platform:      game.Platform,
 			AverageRating: game.AverageRating,
+
+			// ✅ Populate platform links
+			PlayLink:      game.PlayLink,
+			PlayStoreURL:  game.PlayStoreURL,
+			AppStoreURL:   game.AppStoreURL,
+			PCDownloadURL: game.PCDownloadURL,
 		})
 	}
 
 	fmt.Printf("Returning %d minimal games\n", len(minimalGames))
 	return c.JSON(minimalGames)
 }
+
 
 // UpdateGame allows full editing
 func (s *GameService) UpdateGame(c *fiber.Ctx) error {
