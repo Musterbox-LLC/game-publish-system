@@ -314,6 +314,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 	}
 
 	var newPhotos []models.TournamentPhoto
+	var uploadingSecondaryPhotos bool
 
 	// 1. Handle Main Photo Replacement
 	if mainPhotoFile, err := c.FormFile("main_photo"); err == nil && mainPhotoFile.Size > 0 {
@@ -329,10 +330,11 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 		updates["main_photo_url"] = url
 	}
 
-	// 2. Handle Secondary Photos Replacement
+	// 2. Handle Secondary Photos Replacement (only if any are uploaded)
 	for i := 0; ; i++ {
 		key := fmt.Sprintf("photos[%d]", i)
 		if photoFile, err := c.FormFile(key); err == nil && photoFile.Size > 0 {
+			uploadingSecondaryPhotos = true
 			ext := filepath.Ext(photoFile.Filename)
 			if ext == "" {
 				ext = ".jpg"
@@ -350,6 +352,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			}
 			newPhotos = append(newPhotos, newPhoto)
 		} else {
+			// Break on first missing photo field (sequential upload assumption)
 			break
 		}
 	}
@@ -360,23 +363,28 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 			return err
 		}
 
-		// Step 2: Handle Photo Updates
-		var existingSecondaryPhotos []models.TournamentPhoto
-		if err := tx.Where("tournament_id = ?", existingTournament.ID).Find(&existingSecondaryPhotos).Error; err != nil {
-			return err
-		}
-
-		for _, oldPhoto := range existingSecondaryPhotos {
-			if err := tx.Delete(&oldPhoto).Error; err != nil {
+		// Step 2: Handle Photo Updates — ONLY wipe old secondary photos if uploading new ones
+		if uploadingSecondaryPhotos {
+			var existingSecondaryPhotos []models.TournamentPhoto
+			if err := tx.Where("tournament_id = ?", existingTournament.ID).Find(&existingSecondaryPhotos).Error; err != nil {
 				return err
 			}
-		}
 
-		for _, photo := range newPhotos {
-			if err := tx.Create(&photo).Error; err != nil {
-				return err
+			// Delete all existing secondary photos
+			for _, oldPhoto := range existingSecondaryPhotos {
+				if err := tx.Delete(&oldPhoto).Error; err != nil {
+					return err
+				}
+			}
+
+			// Insert new ones
+			for _, photo := range newPhotos {
+				if err := tx.Create(&photo).Error; err != nil {
+					return err
+				}
 			}
 		}
+		// ✅ If no `photos[i]` were uploaded, existing secondary photos remain untouched.
 
 		return nil
 	})
@@ -411,7 +419,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
 	return c.JSON(existingTournament)
 }
-
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
 
