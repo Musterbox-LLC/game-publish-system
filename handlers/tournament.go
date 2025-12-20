@@ -9,10 +9,10 @@ import (
 func SetupTournamentRoutes(app *fiber.App, tournamentService *services.TournamentService, pairingService *services.PairingService) {
 	// 🔓 Public routes for users (only published tournaments)
 	// Add /api/v1 prefix to match your frontend calls
-	app.Get("/api/v1/tournaments/published", tournamentService.GetAllPublishedTournaments) // NEW
-	app.Get("/api/v1/tournaments/published/:id", tournamentService.GetPublishedTournamentByID) // NEW
-	app.Get("/api/v1/match-types", tournamentService.GetSupportedMatchTypes)
-	app.Get("/api/v1/users/search", tournamentService.SearchUsers)
+	app.Get("/tournaments/published", tournamentService.GetAllPublishedTournaments) // NEW
+	app.Get("/tournaments/published/:id", tournamentService.GetPublishedTournamentByID) // NEW
+	app.Get("/match-types", tournamentService.GetSupportedMatchTypes)
+	app.Get("/users/search", tournamentService.SearchUsers)
 
 	// 🔐 Authenticated routes
 	secured := app.Group("/", middleware.UserContextMiddleware())
