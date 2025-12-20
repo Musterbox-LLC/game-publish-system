@@ -2056,3 +2056,347 @@ func (s *TournamentService) ToggleFeaturedStatus(c *fiber.Ctx) error {
 		"tournament": tournament,
 	})
 }
+
+// SchedulePublish schedules a tournament to be published at a specific time
+func (s *TournamentService) SchedulePublish(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	type Req struct {
+		PublishSchedule string `json:"publish_schedule" validate:"required"`
+	}
+
+	var req Req
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+
+	// Parse the publish schedule
+	publishTime, err := time.Parse(time.RFC3339, req.PublishSchedule)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid publish_schedule format (use RFC3339)"})
+	}
+
+	// Check if publish time is in the future
+	if publishTime.Before(time.Now()) {
+		return c.Status(400).JSON(fiber.Map{"error": "publish_schedule must be in the future"})
+	}
+
+	var tournament models.Tournament
+	if err := s.DB.First(&tournament, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+
+	// Update tournament with publish schedule and set status to "scheduled"
+	updates := map[string]interface{}{
+		"publish_schedule": publishTime,
+		"status":           "scheduled",
+		"published_at":     nil, // Clear published_at since it's not published yet
+	}
+
+	if err := s.DB.Model(&tournament).Updates(updates).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to schedule publish"})
+	}
+
+	// Fetch the updated tournament
+	err = s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		First(&tournament, "id = ?", id).Error
+
+	if err != nil {
+		log.Printf("ERROR fetching scheduled tournament %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated tournament"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":    "tournament scheduled for publishing",
+		"tournament": tournament,
+	})
+}
+
+// PublishNow publishes a tournament immediately
+func (s *TournamentService) PublishNow(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var tournament models.Tournament
+	if err := s.DB.First(&tournament, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+
+	// Determine final status based on publish schedule
+	finalStatus := "active"
+	publishedAt := time.Now()
+
+	// If there's a publish schedule that's in the future, clear it
+	if tournament.PublishSchedule != nil && tournament.PublishSchedule.After(time.Now()) {
+		// Clear the schedule since we're publishing now
+		updates := map[string]interface{}{
+			"status":           finalStatus,
+			"published_at":     publishedAt,
+			"publish_schedule": nil,
+		}
+
+		if err := s.DB.Model(&tournament).Updates(updates).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to publish tournament"})
+		}
+	} else {
+		// No schedule or schedule has passed, just publish
+		updates := map[string]interface{}{
+			"status":       finalStatus,
+			"published_at": publishedAt,
+		}
+
+		if err := s.DB.Model(&tournament).Updates(updates).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to publish tournament"})
+		}
+	}
+
+	// Fetch the updated tournament
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		First(&tournament, "id = ?", id).Error
+
+	if err != nil {
+		log.Printf("ERROR fetching published tournament %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated tournament"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":    "tournament published successfully",
+		"tournament": tournament,
+	})
+}
+
+// CancelScheduledPublish cancels a scheduled publish
+func (s *TournamentService) CancelScheduledPublish(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var tournament models.Tournament
+	if err := s.DB.First(&tournament, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+
+	// Only cancel if tournament is scheduled and publish_schedule is in the future
+	if tournament.Status != "scheduled" || tournament.PublishSchedule == nil || tournament.PublishSchedule.Before(time.Now()) {
+		return c.Status(400).JSON(fiber.Map{"error": "tournament is not scheduled for future publishing"})
+	}
+
+	updates := map[string]interface{}{
+		"status":           "draft",
+		"publish_schedule": nil,
+	}
+
+	if err := s.DB.Model(&tournament).Updates(updates).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel scheduled publish"})
+	}
+
+	// Fetch the updated tournament
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		First(&tournament, "id = ?", id).Error
+
+	if err != nil {
+		log.Printf("ERROR fetching tournament after cancel %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated tournament"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":    "scheduled publish cancelled",
+		"tournament": tournament,
+	})
+}
+
+// GetAllPublishedTournaments returns only published/active tournaments for users
+func (s *TournamentService) GetAllPublishedTournaments(c *fiber.Ctx) error {
+	type TournamentMini struct {
+		ID               string     `json:"id"`
+		Name             string     `json:"name"`
+		Status           string     `json:"status"`
+		StartTime        time.Time  `json:"start_time"`
+		EndTime          time.Time  `json:"end_time"`
+		MainPhotoURL     string     `json:"main_photo_url"`
+		EntryFee         float64    `json:"entry_fee"`
+		PrizePool        string     `json:"prize_pool"`
+		SponsorName      string     `json:"sponsor_name"`
+		IsFeatured       bool       `json:"is_featured"`
+		PublishedAt      *time.Time `json:"published_at,omitempty"`
+		GameID           string     `json:"game_id"`
+		GameName         string     `json:"game_name"`
+		GameLogoURL      string     `json:"game_logo_url,omitempty"`
+		MaxSubscribers   int        `json:"max_subscribers"`
+		SubscribersCount int64      `json:"subscribers_count"`
+		Genre            string     `json:"genre,omitempty"`
+		Description      string     `json:"description,omitempty"`
+		CreatedAt        time.Time  `json:"created_at"`
+		UpdatedAt        time.Time  `json:"updated_at"`
+		Requirements     string     `json:"requirements,omitempty"`
+		Rules            string     `json:"rules,omitempty"`
+		Guidelines       string     `json:"guidelines,omitempty"`
+		AcceptsWaivers   bool       `json:"accepts_waivers"`
+		PublishSchedule  *time.Time `json:"publish_schedule,omitempty"`
+	}
+
+	var tournaments []TournamentMini
+
+	// Only show tournaments that are NOT in draft status and NOT deleted
+	// In a real scenario, you might have a "deleted" field or status
+	// For now, we'll assume tournaments are only soft-deleted or have status "deleted"
+	query := `
+        SELECT 
+            t.id,
+            t.name,
+            t.status,
+            t.start_time,
+            t.end_time,
+            t.main_photo_url,
+            t.entry_fee,
+            t.prize_pool,
+            t.sponsor_name,
+            t.is_featured,
+            t.published_at,
+            t.game_id,
+            t.genre,
+            t.description,
+            t.requirements,
+            t.rules,
+            t.guidelines,
+            t.max_subscribers,
+            t.accepts_waivers,
+            t.publish_schedule,
+            t.created_at,
+            t.updated_at,
+            g.name as game_name,
+            g.main_logo_url as game_logo_url,
+            COUNT(ts.id) as subscribers_count
+        FROM tournaments t
+        LEFT JOIN games g ON t.game_id = g.id
+        LEFT JOIN tournament_subscriptions ts ON t.id = ts.tournament_id
+        WHERE t.status IN ('published', 'active', 'scheduled', 'completed')
+        GROUP BY t.id, g.id
+        ORDER BY 
+            t.is_featured DESC,
+            t.status = 'active' DESC,
+            t.status = 'scheduled' DESC,
+            t.publish_schedule ASC,
+            t.created_at DESC
+    `
+
+	err := s.DB.Raw(query).Scan(&tournaments).Error
+	if err != nil {
+		log.Printf("ERROR fetching published tournaments: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch tournaments"})
+	}
+
+	return c.JSON(tournaments)
+}
+
+// GetPublishedTournamentByID returns a tournament only if it's published/active
+func (s *TournamentService) GetPublishedTournamentByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var tournament models.Tournament
+
+	// Only fetch if tournament is published, active, scheduled, or completed
+	// AND not deleted (you might want to add a "deleted_at" field in your model)
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		Where("status IN ('published', 'active', 'scheduled', 'completed')").
+		First(&tournament, "id = ?", id).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found or not available"})
+		}
+		log.Printf("ERROR fetching published tournament %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+
+	// Calculate related counts
+	var subsCount int64
+	s.DB.Model(&models.TournamentSubscription{}).
+		Where("tournament_id = ?", id).
+		Count(&subsCount)
+
+	var activeSubsCount int64
+	s.DB.Model(&models.TournamentSubscription{}).
+		Where("tournament_id = ? AND payment_status = 'paid'", id).
+		Count(&activeSubsCount)
+
+	availableSlots := int64(tournament.MaxSubscribers) - subsCount
+	if tournament.MaxSubscribers <= 0 {
+		availableSlots = -1
+	}
+
+	tournament.SubscribersCount = subsCount
+	tournament.ActiveSubscribersCount = activeSubsCount
+	tournament.AvailableSlots = availableSlots
+
+	return c.JSON(tournament)
+}

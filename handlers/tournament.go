@@ -7,21 +7,31 @@ import (
 )
 
 func SetupTournamentRoutes(app *fiber.App, tournamentService *services.TournamentService, pairingService *services.PairingService) {
-	// 🔓 Public routes
-	app.Get("/tournaments", tournamentService.GetAllTournaments)
-	app.Get("/tournaments/mini", tournamentService.GetAllTournamentsMini)
-	app.Get("/tournaments/:id", tournamentService.GetTournamentByID)
+	// 🔓 Public routes for users (only published tournaments)
+	app.Get("/tournaments/published", tournamentService.GetAllPublishedTournaments) // NEW
+	app.Get("/tournaments/published/:id", tournamentService.GetPublishedTournamentByID) // NEW
 	app.Get("/match-types", tournamentService.GetSupportedMatchTypes)
 	app.Get("/users/search", tournamentService.SearchUsers)
 
 	// 🔐 Authenticated routes
 	secured := app.Group("/", middleware.UserContextMiddleware())
 	
-	// Tournament CRUD
+	// Tournament CRUD (Admin/Manager only)
 	secured.Post("/tournaments", tournamentService.CreateTournament)
+	secured.Get("/tournaments", tournamentService.GetAllTournaments) // Admin view - all tournaments
+	secured.Get("/tournaments/mini", tournamentService.GetAllTournamentsMini) // Admin view - mini list
+	secured.Get("/tournaments/:id", tournamentService.GetTournamentByID) // Admin view - full details
 	secured.Put("/tournaments/:id", tournamentService.UpdateTournament)
 	secured.Delete("/tournaments/:id", tournamentService.DeleteTournament)
+	
+	// Tournament status management
 	secured.Patch("/tournaments/:id/status", tournamentService.UpdateTournamentStatus)
+	secured.Patch("/tournaments/:id/feature", tournamentService.ToggleFeaturedStatus) // Feature/unfeature
+	
+	// NEW: Publish scheduling endpoints
+	secured.Post("/tournaments/:id/publish/now", tournamentService.PublishNow) // Publish immediately
+	secured.Post("/tournaments/:id/publish/schedule", tournamentService.SchedulePublish) // Schedule for later
+	secured.Post("/tournaments/:id/publish/cancel", tournamentService.CancelScheduledPublish) // Cancel scheduled publish
 	
 	// Tournament subscriptions
 	secured.Post("/tournaments/:id/subscribe", tournamentService.SubscribeToTournament)
@@ -43,7 +53,6 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	
 	// Structure: Matches
 	secured.Post("/tournaments/:id/matches", tournamentService.CreateMatch)
-	secured.Patch("/tournaments/:id/feature", tournamentService.ToggleFeaturedStatus)
 	secured.Put("/tournaments/:id/matches/:match_id", tournamentService.UpdateMatch)
 	secured.Delete("/tournaments/:id/matches/:match_id", tournamentService.DeleteMatch)
 	

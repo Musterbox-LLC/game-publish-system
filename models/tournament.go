@@ -25,6 +25,7 @@ type Tournament struct {
 	StartTime       time.Time  `json:"start_time" gorm:"not null"`
 	EndTime         time.Time  `json:"end_time"`
 	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
+    DeletedAt        gorm.DeletedAt    `json:"deleted_at,omitempty" gorm:"index"` 
 	UpdatedAt       time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 	PublishedAt     *time.Time `json:"published_at,omitempty" gorm:"index"`
 	PrizePool       string     `json:"prize_pool"`
