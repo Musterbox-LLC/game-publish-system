@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -868,6 +869,7 @@ func (s *GameService) DeleteReview(c *fiber.Ctx) error {
 }
 
 // GetUserReviewStatus checks if a user has reviewed a specific game
+// This function already exists in your provided code.
 func (s *GameService) GetUserReviewStatus(c *fiber.Ctx) error {
 	gameID := c.Params("id")
 	userID := c.Query("user_id") // Get user ID from query param
@@ -893,4 +895,93 @@ func (s *GameService) GetUserReviewStatus(c *fiber.Ctx) error {
 		"has_reviewed": true,
 		"review":       review,
 	})
+}
+
+
+// SetGameFeatured marks a game as featured or not featured.
+func (s *GameService) SetGameFeatured(c *fiber.Ctx) error {
+	id := c.Params("id")
+	featureAction := c.Params("action") // Expect "feature" or "unfeature"
+
+	var game models.Game
+	if err := s.DB.First(&game, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "game not found"})
+		}
+		log.Printf("DB Error fetching game: %v", err) // Log error for debugging
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "DB error"})
+	}
+
+	isFeatured := false
+	if featureAction == "feature" {
+		isFeatured = true
+	} else if featureAction != "unfeature" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid action, use 'feature' or 'unfeature'"})
+	}
+
+	game.IsFeatured = isFeatured
+
+	if err := s.DB.Save(&game).Error; err != nil {
+		log.Printf("DB Error updating game featured status: %v", err) // Log error for debugging
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update game"})
+	}
+
+	actionMessage := "featured"
+	if !isFeatured {
+		actionMessage = "unfeatured"
+	}
+
+	return c.JSON(fiber.Map{
+		"message": fmt.Sprintf("game %s successfully", actionMessage),
+		"game":    game,
+	})
+}
+
+// GetFeaturedGames returns all games that are marked as featured.
+func (s *GameService) GetFeaturedGames(c *fiber.Ctx) error {
+	var games []models.Game
+	if err := s.DB.Preload("Screenshots").Preload("VideoLinks").Where("status = ? AND is_featured = ?", "published", true).Find(&games).Error; err != nil {
+		log.Printf("DB Error fetching featured games: %v", err) // Log error for debugging
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch featured games"})
+	}
+	return c.JSON(games)
+}
+
+// GetFeaturedGamesMinimal returns a lightweight list of featured games.
+func (s *GameService) GetFeaturedGamesMinimal(c *fiber.Ctx) error {
+	var games []models.Game
+	if err := s.DB.Select(`
+		id, 
+		name, 
+		main_logo_url, 
+		platform, 
+		average_rating,
+		play_link,
+		play_store_url,
+		app_store_url,
+		pc_download_url,
+		is_featured
+	`).
+		Where("status = ? AND is_featured = ?", "published", true).
+		Find(&games).Error; err != nil {
+		log.Printf("DB Error fetching featured games minimal: %v", err) // Log error for debugging
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch featured games"})
+	}
+
+	var minimalGames []MinimalGame
+	for _, game := range games {
+		minimalGames = append(minimalGames, MinimalGame{
+			ID:            game.ID,
+			Name:          game.Name,
+			MainLogoURL:   game.MainLogoURL,
+			Platform:      game.Platform,
+			AverageRating: game.AverageRating,
+			PlayLink:      game.PlayLink,
+			PlayStoreURL:  game.PlayStoreURL,
+			AppStoreURL:   game.AppStoreURL,
+			PCDownloadURL: game.PCDownloadURL,
+		})
+	}
+
+	return c.JSON(minimalGames)
 }

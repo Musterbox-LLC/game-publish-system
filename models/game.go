@@ -20,16 +20,16 @@ const (
 )
 
 type Game struct {
-	ID               string           `json:"id" gorm:"primaryKey"`
-	Name             string           `json:"name" gorm:"not null"`
-	ShortDescription string           `json:"short_description"`
-	LongDescription  string           `json:"long_description"`
-	GameType         string           `json:"game_type"`
-	Platform         string           `json:"platform"`
-	AgeRating        string           `json:"age_rating"`
+	ID               string `json:"id" gorm:"primaryKey"`
+	Name             string `json:"name" gorm:"not null"`
+	ShortDescription string `json:"short_description"`
+	LongDescription  string `json:"long_description"`
+	GameType         string `json:"game_type"`
+	Platform         string `json:"platform"`
+	AgeRating        string `json:"age_rating"`
 
 	// 🖼️ Media
-	MainLogoURL string `json:"main_logo_url"` // e.g., "/uploads/logo/abc.png"
+	MainLogoURL string           `json:"main_logo_url"` // e.g., "/uploads/logo/abc.png"
 	Screenshots []GameScreenshot `json:"screenshots" gorm:"foreignKey:GameID"`
 	VideoLinks  []GameVideo      `json:"video_links" gorm:"foreignKey:GameID"`
 
@@ -48,13 +48,13 @@ type Game struct {
 
 	// 🌟 NEW: Average rating from reviews
 	AverageRating float64 `json:"average_rating" gorm:"default:0"`
-
+	IsFeatured    bool    `json:"is_featured" gorm:"default:false"`
 	// 🎛️ Publishing state
 	Status    string     `json:"status" gorm:"default:'draft'"` // draft | scheduled | published
-	PublishAt *time.Time `json:"publish_at"`                   // only used if scheduled
+	PublishAt *time.Time `json:"publish_at"`                    // only used if scheduled
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 
 	// 🔗 Reviews
@@ -62,20 +62,19 @@ type Game struct {
 }
 
 type GameScreenshot struct {
-	ID      string `json:"id" gorm:"primaryKey"`
-	GameID  string `json:"game_id"`
-	URL     string `json:"url"` // e.g., "/uploads/screenshots/xyz.jpg"
-	Order   int    `json:"order"`
+	ID     string `json:"id" gorm:"primaryKey"`
+	GameID string `json:"game_id"`
+	URL    string `json:"url"` // e.g., "/uploads/screenshots/xyz.jpg"
+	Order  int    `json:"order"`
 }
 
 type GameVideo struct {
-	ID      string `json:"id" gorm:"primaryKey"`
-	GameID  string `json:"game_id"`
-	URL     string `json:"url"` // e.g., "https://youtube.com/watch?v=..."
-	Title   string `json:"title"`
-	Order   int    `json:"order"`
+	ID     string `json:"id" gorm:"primaryKey"`
+	GameID string `json:"game_id"`
+	URL    string `json:"url"` // e.g., "https://youtube.com/watch?v=..."
+	Title  string `json:"title"`
+	Order  int    `json:"order"`
 }
-
 
 type Review struct {
 	ID            string    `json:"id" gorm:"primaryKey"`

@@ -13,6 +13,9 @@ func SetupGameRoutes(app *fiber.App, gameService *services.GameService) {
 	app.Get("/games/minimal", gameService.GetMinimalGames)
 	app.Get("/games/:id", gameService.GetGameByID)
 
+	app.Get("/games/featured", gameService.GetFeaturedGames)
+	app.Get("/games/featured/minimal", gameService.GetFeaturedGamesMinimal)
+
 	// 🔐 Secured routes — require user context (userID, roles), enforced via middleware
 	// Note: Group under `/s` to match tournament design & allow UserContextMiddleware gating
 	secured := app.Group("/", middleware.UserContextMiddleware())
@@ -22,6 +25,8 @@ func SetupGameRoutes(app *fiber.App, gameService *services.GameService) {
 	secured.Patch("/games/:id", gameService.UpdateGame)
 	secured.Delete("/games/:id", gameService.DeleteGame)
 	secured.Post("/games/:id/process-web3gl", gameService.ProcessWebGL)
+
+	secured.Put("/games/:id/featured/:action", gameService.SetGameFeatured)
 
 	// ✅ Review routes — auth required
 	secured.Post("/games/:id/reviews", gameService.CreateReview)
@@ -52,9 +57,9 @@ func SetupRewardRoutes(app *fiber.App, rewardService *services.RewardService, au
 	// 🔒 Admin-only routes - Group under /admin/rewards to match tournament routes
 	admin := app.Group("/admin/rewards", middleware.UserContextMiddleware())
 
-	admin.Post("/create", rewardService.CreateReward)              
-	admin.Put("/:id", rewardService.UpdateReward)                  
-	admin.Patch("/:id/status", rewardService.UpdateRewardStatus)   
-	admin.Delete("/rewards/:id", rewardService.DeleteReward)               
-	admin.Get("/", rewardService.GetAllRewards)                     
+	admin.Post("/create", rewardService.CreateReward)
+	admin.Put("/:id", rewardService.UpdateReward)
+	admin.Patch("/:id/status", rewardService.UpdateRewardStatus)
+	admin.Delete("/rewards/:id", rewardService.DeleteReward)
+	admin.Get("/", rewardService.GetAllRewards)
 }
