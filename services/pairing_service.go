@@ -658,56 +658,60 @@ func (ps *PairingService) publishPairingsInternal(pairingID string, userID strin
 	return nil
 }
 
-// GetPairingStatus returns the current status of pairings for a match
-func (ps *PairingService) GetPairingStatus(c *fiber.Ctx) error {
-	matchID := c.Params("match_id")
-	
-	var pairing models.MatchPairing
-	err := ps.DB.Where("match_id = ?", matchID).
-		Order("created_at DESC").
-		First(&pairing).Error
-	
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(fiber.Map{
-				"match_id": matchID,
-				"status":   "not_started",
-				"has_pairings": false,
-			})
-		}
-		return c.Status(500).JSON(fiber.Map{"error": "database error"})
-	}
-	
-	// Parse pairs for response
-	var pairs []Pair
-	json.Unmarshal([]byte(pairing.PairsJSON), &pairs)
-	
-	var metadata map[string]interface{}
-	json.Unmarshal([]byte(pairing.MetadataJSON), &metadata)
-	
-	response := PairingResponse{
-		MatchID:    pairing.MatchID,
-		PairingID:  pairing.ID,
-		Status:     pairing.Status,
-		Pairs:      pairs,
-		TotalPairs: len(pairs),
-		ProposedAt: pairing.ProposedAt,
-		CanEdit:    pairing.Status == "proposed" || pairing.Status == "pending",
-		CanApprove: pairing.Status == "proposed",
-		CanPublish: pairing.Status == "approved",
-		Metadata:   metadata,
-	}
-	
-	if pairing.ApprovedAt != nil {
-		response.Metadata["approved_at"] = pairing.ApprovedAt
-	}
-	if pairing.PublishedAt != nil {
-		response.Metadata["published_at"] = pairing.PublishedAt
-	}
-	
-	return c.JSON(response)
+func (s *PairingService) GetPairingStatus(c *fiber.Ctx) error {
+    matchId := c.Params("match_id")
+    
+    // Fetch the latest pairing for this match
+    var pairing models.MatchPairing
+    // Change from: ORDER BY created_at DESC
+    // To: ORDER BY proposed_at DESC
+    if err := s.DB.Where("match_id = ?", matchId).
+        Order("proposed_at DESC").
+        First(&pairing).Error; err != nil {
+        
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return c.JSON(fiber.Map{
+                "status":       "no_pairing",
+                "pairing_id":   nil,
+                "match_id":     matchId,
+                "has_pairing":  false,
+                "message":      "No pairing has been generated yet",
+            })
+        }
+        
+        log.Printf("ERROR fetching pairing status for match %s: %v", matchId, err)
+        return c.Status(500).JSON(fiber.Map{"error": "database error"})
+    }
+    
+    // Count number of players in the pairing
+    var pairCount int
+    if pairing.PairsJSON != "" {
+        var pairs []map[string]interface{}
+        if err := json.Unmarshal([]byte(pairing.PairsJSON), &pairs); err == nil {
+            pairCount = len(pairs)
+        }
+    }
+    
+    return c.JSON(fiber.Map{
+        "status":        pairing.Status,
+        "pairing_id":    pairing.ID,
+        "match_id":      pairing.MatchID,
+        "tournament_id": pairing.TournamentID,
+        "batch_id":      pairing.BatchID,
+        "has_pairing":   true,
+        "version":       pairing.Version,
+        "pair_count":    pairCount,
+        "proposed_by":   pairing.ProposedBy,
+        "proposed_at":   pairing.ProposedAt,
+        "approved_by":   pairing.ApprovedBy,
+        "approved_at":   pairing.ApprovedAt,
+        "published_by":  pairing.PublishedBy,
+        "published_at":  pairing.PublishedAt,
+        "rejected_by":   pairing.RejectedBy,
+        "rejected_at":   pairing.RejectedAt,
+        "rejection_reason": pairing.RejectionReason,
+    })
 }
-
 // RejectPairings rejects the proposed pairings
 func (ps *PairingService) RejectPairings(c *fiber.Ctx) error {
 	pairingID := c.Params("pairing_id")
@@ -759,56 +763,42 @@ func (ps *PairingService) RejectPairings(c *fiber.Ctx) error {
 	})
 }
 
-// GetPairingHistory returns all pairing versions for a match
-func (ps *PairingService) GetPairingHistory(c *fiber.Ctx) error {
-	matchID := c.Params("match_id")
-	
-	var pairings []models.MatchPairing
-	err := ps.DB.Where("match_id = ?", matchID).
-		Order("created_at DESC").
-		Find(&pairings).Error
-	
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "database error"})
-	}
-	
-	type PairingHistoryItem struct {
-		ID         string    `json:"id"`
-		Version    int       `json:"version"`
-		Status     string    `json:"status"`
-		PairingType string   `json:"pairing_type"`
-		SeedingMethod string `json:"seeding_method"`
-		ProposedBy string    `json:"proposed_by"`
-		ProposedAt time.Time `json:"proposed_at"`
-		ApprovedAt *time.Time `json:"approved_at,omitempty"`
-		PublishedAt *time.Time `json:"published_at,omitempty"`
-		RejectedAt *time.Time `json:"rejected_at,omitempty"`
-		TotalPairs int       `json:"total_pairs"`
-	}
-	
-	history := make([]PairingHistoryItem, len(pairings))
-	for i, pairing := range pairings {
-		var pairs []Pair
-		json.Unmarshal([]byte(pairing.PairsJSON), &pairs)
-		
-		history[i] = PairingHistoryItem{
-			ID:           pairing.ID,
-			Version:      pairing.Version,
-			Status:       pairing.Status,
-			PairingType:  pairing.PairingType,
-			SeedingMethod: pairing.SeedingMethod,
-			ProposedBy:   pairing.ProposedBy,
-			ProposedAt:   pairing.ProposedAt,
-			ApprovedAt:   pairing.ApprovedAt,
-			PublishedAt:  pairing.PublishedAt,
-			RejectedAt:   pairing.RejectedAt,
-			TotalPairs:   len(pairs),
-		}
-	}
-	
-	return c.JSON(fiber.Map{
-		"match_id": matchID,
-		"history":  history,
-		"count":    len(history),
-	})
+func (s *PairingService) GetPairingHistory(c *fiber.Ctx) error {
+    matchId := c.Params("match_id")
+    
+    var pairings []models.MatchPairing
+    // Change from: ORDER BY created_at DESC
+    // To: ORDER BY proposed_at DESC
+    if err := s.DB.Where("match_id = ?", matchId).
+        Order("proposed_at DESC").
+        Find(&pairings).Error; err != nil {
+        
+        log.Printf("ERROR fetching pairing history for match %s: %v", matchId, err)
+        return c.Status(500).JSON(fiber.Map{"error": "database error"})
+    }
+    
+    // Format the response
+    var history []map[string]interface{}
+    for _, p := range pairings {
+        history = append(history, map[string]interface{}{
+            "id":          p.ID,
+            "status":      p.Status,
+            "version":     p.Version,
+            "proposed_by": p.ProposedBy,
+            "proposed_at": p.ProposedAt,
+            "approved_by": p.ApprovedBy,
+            "approved_at": p.ApprovedAt,
+            "published_by": p.PublishedBy,
+            "published_at": p.PublishedAt,
+            "rejected_by": p.RejectedBy,
+            "rejected_at": p.RejectedAt,
+            "rejection_reason": p.RejectionReason,
+        })
+    }
+    
+    return c.JSON(fiber.Map{
+        "match_id": matchId,
+        "history":  history,
+        "count":    len(history),
+    })
 }

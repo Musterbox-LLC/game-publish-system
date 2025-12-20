@@ -10,32 +10,32 @@ import (
 // Tournament represents a leaderboard-style tournament
 // Tournament represents a leaderboard-style tournament
 type Tournament struct {
-	ID              string     `json:"id" gorm:"primaryKey"`
-	GameID          string     `json:"game_id" gorm:"not null"`
-	Name            string     `json:"name" gorm:"not null"`
-	Description     string     `json:"description"`
-	Rules           string     `json:"rules"`
-	Guidelines      string     `json:"guidelines"`
-	Genre           string     `json:"genre"`
-	GenreTags       string     `json:"genre_tags" gorm:"column:genre_tags"`
-	MaxSubscribers  int        `json:"max_subscribers" gorm:"default:0"`
-	EntryFee        float64    `json:"entry_fee" gorm:"default:0"`
-	MainPhotoURL    string     `json:"main_photo_url"`
-	Status          string     `json:"status" gorm:"default:'draft'"`
-	StartTime       time.Time  `json:"start_time" gorm:"not null"`
-	EndTime         time.Time  `json:"end_time"`
-	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
-    DeletedAt        gorm.DeletedAt    `json:"deleted_at,omitempty" gorm:"index"` 
-	UpdatedAt       time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
-	PublishedAt     *time.Time `json:"published_at,omitempty" gorm:"index"`
-	PrizePool       string     `json:"prize_pool"`
-	Requirements    string     `json:"requirements" gorm:"type:text"`
-	SponsorName     string     `json:"sponsor_name"`
-	IsFeatured      bool       `json:"is_featured" gorm:"default:false"`
-	FeaturedOrder   int        `json:"featured_order" gorm:"default:0"`
-	FeaturedAt      *time.Time `json:"featured_at,omitempty"`
-	PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
-	AcceptsWaivers  bool       `json:"accepts_waivers" gorm:"default:true"`
+	ID              string         `json:"id" gorm:"primaryKey"`
+	GameID          string         `json:"game_id" gorm:"not null"`
+	Name            string         `json:"name" gorm:"not null"`
+	Description     string         `json:"description"`
+	Rules           string         `json:"rules"`
+	Guidelines      string         `json:"guidelines"`
+	Genre           string         `json:"genre"`
+	GenreTags       string         `json:"genre_tags" gorm:"column:genre_tags"`
+	MaxSubscribers  int            `json:"max_subscribers" gorm:"default:0"`
+	EntryFee        float64        `json:"entry_fee" gorm:"default:0"`
+	MainPhotoURL    string         `json:"main_photo_url"`
+	Status          string         `json:"status" gorm:"default:'draft'"`
+	StartTime       time.Time      `json:"start_time" gorm:"not null"`
+	EndTime         time.Time      `json:"end_time"`
+	CreatedAt       time.Time      `json:"created_at" gorm:"autoCreateTime"`
+	DeletedAt       gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	UpdatedAt       time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
+	PublishedAt     *time.Time     `json:"published_at,omitempty" gorm:"index"`
+	PrizePool       string         `json:"prize_pool"`
+	Requirements    string         `json:"requirements" gorm:"type:text"`
+	SponsorName     string         `json:"sponsor_name"`
+	IsFeatured      bool           `json:"is_featured" gorm:"default:false"`
+	FeaturedOrder   int            `json:"featured_order" gorm:"default:0"`
+	FeaturedAt      *time.Time     `json:"featured_at,omitempty"`
+	PublishSchedule *time.Time     `json:"publish_schedule,omitempty"`
+	AcceptsWaivers  bool           `json:"accepts_waivers" gorm:"default:true"`
 
 	// Relationships
 	Game          Game                     `json:"game,omitempty" gorm:"foreignKey:GameID"`
@@ -134,6 +134,9 @@ type MatchPairing struct {
 	Match      TournamentMatch `json:"match,omitempty" gorm:"foreignKey:MatchID"`
 	Tournament Tournament      `json:"tournament,omitempty" gorm:"foreignKey:TournamentID"`
 	Batch      TournamentBatch `json:"batch,omitempty" gorm:"foreignKey:BatchID"`
+
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 // PlayerSeeding stores seeding information for players in a tournament
