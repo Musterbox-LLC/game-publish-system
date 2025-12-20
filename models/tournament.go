@@ -31,6 +31,8 @@ type Tournament struct {
 	Requirements    string     `json:"requirements" gorm:"type:text"`
 	SponsorName     string     `json:"sponsor_name"`
 	IsFeatured      bool       `json:"is_featured" gorm:"default:false"`
+	FeaturedOrder   int        `json:"featured_order" gorm:"default:0"`
+	FeaturedAt      *time.Time `json:"featured_at,omitempty"`
 	PublishSchedule *time.Time `json:"publish_schedule,omitempty"`
 	AcceptsWaivers  bool       `json:"accepts_waivers" gorm:"default:true"`
 

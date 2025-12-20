@@ -43,6 +43,7 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	
 	// Structure: Matches
 	secured.Post("/tournaments/:id/matches", tournamentService.CreateMatch)
+	secured.Patch("/tournaments/:id/feature", tournamentService.ToggleFeaturedStatus)
 	secured.Put("/tournaments/:id/matches/:match_id", tournamentService.UpdateMatch)
 	secured.Delete("/tournaments/:id/matches/:match_id", tournamentService.DeleteMatch)
 	

@@ -1994,3 +1994,65 @@ func (s *TournamentService) CreateBatch(c *fiber.Ctx) error {
 
 	return c.Status(201).JSON(batch)
 }
+
+
+// ToggleFeaturedStatus toggles the featured status of a tournament
+func (s *TournamentService) ToggleFeaturedStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	
+	type Req struct {
+		IsFeatured bool `json:"is_featured"`
+	}
+	
+	var req Req
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+	
+	var tournament models.Tournament
+	if err := s.DB.First(&tournament, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{"error": "tournament not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": "DB error"})
+	}
+	
+	// Update the featured status
+	updates := map[string]interface{}{
+		"is_featured": req.IsFeatured,
+	}
+	
+	if err := s.DB.Model(&tournament).Updates(updates).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update featured status"})
+	}
+	
+	// Fetch the updated tournament with all associations
+	err := s.DB.
+		Preload("Game").
+		Preload("Photos", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+			return db.Order("\"sort_order\" ASC")
+		}).
+		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("joined_at DESC")
+		}).
+		First(&tournament, "id = ?", id).Error
+		
+	if err != nil {
+		log.Printf("ERROR fetching updated tournament %s: %v", id, err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch updated tournament"})
+	}
+	
+	return c.JSON(fiber.Map{
+		"message":    "featured status updated",
+		"tournament": tournament,
+	})
+}
