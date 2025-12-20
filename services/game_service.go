@@ -41,6 +41,8 @@ type MinimalGame struct {
 	PlayStoreURL  string `json:"play_store_url,omitempty"`
 	AppStoreURL   string `json:"app_store_url,omitempty"`
 	PCDownloadURL string `json:"pc_download_url,omitempty"`
+
+	IsFeatured bool `json:"is_featured"`
 }
 
 // UploadGame creates a new **draft** game with core file, media, and platform links.
@@ -184,6 +186,7 @@ func (s *GameService) UploadGame(c *fiber.Ctx) error {
 func (s *GameService) GetAllGames(c *fiber.Ctx) error {
 	var games []models.Game
 	// ✅ GORM automatically adds `WHERE deleted_at IS NULL`
+	// 🔥 ADDED: Preload IsFeatured status (though it's a direct field, preloading is good practice if it were a relation)
 	if err := s.DB.Preload("Screenshots").Preload("VideoLinks").Preload("Reviews").Find(&games).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch games"})
 	}
@@ -195,6 +198,7 @@ func (s *GameService) GetGameByID(c *fiber.Ctx) error {
 	id := c.Params("id")
 
 	var game models.Game
+	// 🔥 ADDED: Preload IsFeatured status (though it's a direct field, preloading is good practice if it were a relation)
 	if err := s.DB.Preload("Screenshots").Preload("VideoLinks").Preload("Reviews").First(&game, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "game not found"})
@@ -205,11 +209,11 @@ func (s *GameService) GetGameByID(c *fiber.Ctx) error {
 }
 
 // GetMinimalGames returns lightweight game list (published only) with average ratings
-// GetMinimalGames returns lightweight game list (published only) with average ratings and platform links
 func (s *GameService) GetMinimalGames(c *fiber.Ctx) error {
 	fmt.Println("GetMinimalGames called")
 
 	var games []models.Game
+	// 🔥 UPDATED: SELECT query now includes the 'is_featured' column
 	if err := s.DB.Select(`
 		id, 
 		name, 
@@ -219,7 +223,8 @@ func (s *GameService) GetMinimalGames(c *fiber.Ctx) error {
 		play_link,
 		play_store_url,
 		app_store_url,
-		pc_download_url
+		pc_download_url,
+		is_featured -- <--- ADD THIS LINE
 	`).
 		Where("status = ?", "published").
 		Find(&games).Error; err != nil {
@@ -234,19 +239,19 @@ func (s *GameService) GetMinimalGames(c *fiber.Ctx) error {
 			MainLogoURL:   game.MainLogoURL,
 			Platform:      game.Platform,
 			AverageRating: game.AverageRating,
-
 			// ✅ Populate platform links
 			PlayLink:      game.PlayLink,
 			PlayStoreURL:  game.PlayStoreURL,
 			AppStoreURL:   game.AppStoreURL,
 			PCDownloadURL: game.PCDownloadURL,
+			// 🔥 NEW: Populate the IsFeatured field in the minimal struct
+			IsFeatured: game.IsFeatured, // <--- ADD THIS LINE
 		})
 	}
 
 	fmt.Printf("Returning %d minimal games\n", len(minimalGames))
 	return c.JSON(minimalGames)
 }
-
 
 // UpdateGame allows full editing
 func (s *GameService) UpdateGame(c *fiber.Ctx) error {
@@ -407,7 +412,7 @@ func (s *GameService) DeleteGame(c *fiber.Ctx) error {
 	s.DB.Model(&models.Tournament{}).Where("game_id = ? AND deleted_at IS NULL", id).Count(&tournamentCount)
 	if tournamentCount > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "cannot delete game: still referenced by active tournaments",
+			"error":            "cannot delete game: still referenced by active tournaments",
 			"tournament_count": tournamentCount,
 		})
 	}
@@ -438,7 +443,6 @@ func (s *GameService) DeleteGame(c *fiber.Ctx) error {
 		"id":      id,
 	})
 }
-
 
 // UndeleteGame restores a soft-deleted game
 func (s *GameService) UndeleteGame(c *fiber.Ctx) error {
@@ -896,7 +900,6 @@ func (s *GameService) GetUserReviewStatus(c *fiber.Ctx) error {
 		"review":       review,
 	})
 }
-
 
 // SetGameFeatured marks a game as featured or not featured.
 func (s *GameService) SetGameFeatured(c *fiber.Ctx) error {
