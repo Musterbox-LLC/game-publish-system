@@ -337,7 +337,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
     if removedIndicesStr != "" {
         parts := strings.Split(removedIndicesStr, ",")
         for _, part := range parts {
-            if idx, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+            if idx, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && idx >= 0 && idx < 5 {
                 removedIndices = append(removedIndices, idx)
             }
         }
@@ -349,7 +349,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
             return err
         }
 
-        // Step 2: Handle Photo Removals
+        // Step 2: Handle Photo Removals - Delete from database
         for _, sortOrder := range removedIndices {
             if err := tx.Where("tournament_id = ? AND sort_order = ?", 
                 existingTournament.ID, sortOrder).Delete(&models.TournamentPhoto{}).Error; err != nil {
@@ -360,6 +360,19 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
         // Step 3: Handle Photo Uploads/Updates
         // Process each photo index from 0 to 4
         for i := 0; i < 5; i++ {
+            // Skip if this index was marked for removal
+            skipThisIndex := false
+            for _, removedIdx := range removedIndices {
+                if removedIdx == i {
+                    skipThisIndex = true
+                    break
+                }
+            }
+            if skipThisIndex {
+                continue
+            }
+
+            // Check if there's a file upload for this index
             key := fmt.Sprintf("photos[%d]", i)
             if photoFile, err := c.FormFile(key); err == nil && photoFile.Size > 0 {
                 // Upload the photo
@@ -398,6 +411,7 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
                     return err
                 }
             }
+            // If no file for this index and not removed, leave it as is (no change)
         }
 
         return nil
@@ -433,7 +447,6 @@ func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
 
     return c.JSON(existingTournament)
 }
-
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
 
