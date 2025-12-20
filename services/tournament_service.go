@@ -220,205 +220,220 @@ func (s *TournamentService) CreateTournament(c *fiber.Ctx) error {
 	return c.Status(201).JSON(tournament)
 }
 
-// UpdateTournament handles updating an existing tournament by ID.
 func (s *TournamentService) UpdateTournament(c *fiber.Ctx) error {
-	id := c.Params("id")
-	var existingTournament models.Tournament
+    id := c.Params("id")
+    var existingTournament models.Tournament
 
-	if err := s.DB.First(&existingTournament, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Tournament not found"})
-		}
-		log.Printf("DB Error fetching tournament %s: %v", id, err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
-	}
+    if err := s.DB.First(&existingTournament, "id = ?", id).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Tournament not found"})
+        }
+        log.Printf("DB Error fetching tournament %s: %v", id, err)
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+    }
 
-	// --- Validate and Parse start_time ---
-	startTimeStr := c.FormValue("start_time")
-	if startTimeStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "start_time is required and cannot be empty",
-		})
-	}
-	parsedStartTime, err := time.Parse(time.RFC3339, startTimeStr)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid start_time format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
-		})
-	}
+    // --- Validate and Parse start_time ---
+    startTimeStr := c.FormValue("start_time")
+    if startTimeStr == "" {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+            "error": "start_time is required and cannot be empty",
+        })
+    }
+    parsedStartTime, err := time.Parse(time.RFC3339, startTimeStr)
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+            "error": "Invalid start_time format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
+        })
+    }
 
-	// --- Validate and Parse end_time ---
-	endTimeStr := c.FormValue("end_time")
-	var parsedEndTime *time.Time
-	if endTimeStr != "" {
-		parsedET, err := time.Parse(time.RFC3339, endTimeStr)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid end_time format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
-			})
-		}
-		parsedEndTime = &parsedET
-	}
+    // --- Validate and Parse end_time ---
+    endTimeStr := c.FormValue("end_time")
+    var parsedEndTime *time.Time
+    if endTimeStr != "" {
+        parsedET, err := time.Parse(time.RFC3339, endTimeStr)
+        if err != nil {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+                "error": "Invalid end_time format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
+            })
+        }
+        parsedEndTime = &parsedET
+    }
 
-	// --- Validate and Parse publish_schedule ---
-	publishScheduleStr := c.FormValue("publish_schedule")
-	var parsedPublishSchedule *time.Time
-	if publishScheduleStr != "" {
-		parsedPS, err := time.Parse(time.RFC3339, publishScheduleStr)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid publish_schedule format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
-			})
-		}
-		parsedPublishSchedule = &parsedPS
-	}
+    // --- Validate and Parse publish_schedule ---
+    publishScheduleStr := c.FormValue("publish_schedule")
+    var parsedPublishSchedule *time.Time
+    if publishScheduleStr != "" {
+        parsedPS, err := time.Parse(time.RFC3339, publishScheduleStr)
+        if err != nil {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+                "error": "Invalid publish_schedule format. Must be RFC3339 (e.g., 2024-01-01T15:04:05Z)",
+            })
+        }
+        parsedPublishSchedule = &parsedPS
+    }
 
-	// --- Prepare updates map ---
-	updates := map[string]interface{}{
-		"start_time":  parsedStartTime,
-		"name":        strings.TrimSpace(c.FormValue("name")),
-		"genre":       strings.TrimSpace(c.FormValue("genre")),
-		"genre_tags":  strings.TrimSpace(c.FormValue("genre_tags")),
-		"description": c.FormValue("description"),
-		"rules":       c.FormValue("rules"),
-		"guidelines":  c.FormValue("guidelines"),
-		"max_subscribers": func() int {
-			if v := c.FormValue("max_subscribers"); v != "" {
-				if val, err := strconv.Atoi(v); err == nil {
-					return val
-				}
-			}
-			return 0
-		}(),
-		"entry_fee": func() float64 {
-			if v := c.FormValue("entry_fee"); v != "" {
-				if val, err := strconv.ParseFloat(v, 64); err == nil {
-					return val
-				}
-			}
-			return 0.0
-		}(),
-		"prize_pool":      c.FormValue("prize_pool"),
-		"requirements":    c.FormValue("requirements"),
-		"sponsor_name":    c.FormValue("sponsor_name"),
-		"is_featured":     c.FormValue("is_featured") == "true",
-		"accepts_waivers": c.FormValue("accepts_waivers") == "true",
-		"status":          c.FormValue("status"),
-	}
+    // --- Prepare updates map ---
+    updates := map[string]interface{}{
+        "start_time": parsedStartTime,
+        "name":        strings.TrimSpace(c.FormValue("name")),
+        "genre":       strings.TrimSpace(c.FormValue("genre")),
+        "genre_tags":  strings.TrimSpace(c.FormValue("genre_tags")),
+        "description": c.FormValue("description"),
+        "rules":       c.FormValue("rules"),
+        "guidelines":  c.FormValue("guidelines"),
+        "max_subscribers": func() int {
+            if v := c.FormValue("max_subscribers"); v != "" {
+                if val, err := strconv.Atoi(v); err == nil {
+                    return val
+                }
+            }
+            return 0
+        }(),
+        "entry_fee": func() float64 {
+            if v := c.FormValue("entry_fee"); v != "" {
+                if val, err := strconv.ParseFloat(v, 64); err == nil {
+                    return val
+                }
+            }
+            return 0.0
+        }(),
+        "prize_pool":      c.FormValue("prize_pool"),
+        "requirements":    c.FormValue("requirements"),
+        "sponsor_name":    c.FormValue("sponsor_name"),
+        "is_featured":     c.FormValue("is_featured") == "true",
+        "accepts_waivers": c.FormValue("accepts_waivers") == "true",
+        "status":          c.FormValue("status"),
+    }
 
-	if parsedEndTime != nil {
-		updates["end_time"] = *parsedEndTime
-	}
-	if parsedPublishSchedule != nil {
-		updates["publish_schedule"] = *parsedPublishSchedule
-	}
+    if parsedEndTime != nil {
+        updates["end_time"] = *parsedEndTime
+    }
+    if parsedPublishSchedule != nil {
+        updates["publish_schedule"] = *parsedPublishSchedule
+    }
 
-	var newPhotos []models.TournamentPhoto
-	var uploadingSecondaryPhotos bool
+    // 1. Handle Main Photo Replacement
+    if mainPhotoFile, err := c.FormFile("main_photo"); err == nil && mainPhotoFile.Size > 0 {
+        ext := filepath.Ext(mainPhotoFile.Filename)
+        if ext == "" {
+            ext = ".jpg"
+        }
+        key := fmt.Sprintf("tournaments/main/%s%s", uuid.NewString(), ext)
+        url, err := utils.UploadFileToR2(mainPhotoFile, key)
+        if err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to upload main photo"})
+        }
+        updates["main_photo_url"] = url
+    }
 
-	// 1. Handle Main Photo Replacement
-	if mainPhotoFile, err := c.FormFile("main_photo"); err == nil && mainPhotoFile.Size > 0 {
-		ext := filepath.Ext(mainPhotoFile.Filename)
-		if ext == "" {
-			ext = ".jpg"
-		}
-		key := fmt.Sprintf("tournaments/main/%s%s", uuid.NewString(), ext)
-		url, err := utils.UploadFileToR2(mainPhotoFile, key)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to upload main photo"})
-		}
-		updates["main_photo_url"] = url
-	}
+    // Check if main photo should be removed
+    if c.FormValue("main_photo_removed") == "true" {
+        updates["main_photo_url"] = ""
+    }
 
-	// 2. Handle Secondary Photos Replacement (only if any are uploaded)
-	for i := 0; ; i++ {
-		key := fmt.Sprintf("photos[%d]", i)
-		if photoFile, err := c.FormFile(key); err == nil && photoFile.Size > 0 {
-			uploadingSecondaryPhotos = true
-			ext := filepath.Ext(photoFile.Filename)
-			if ext == "" {
-				ext = ".jpg"
-			}
-			photoKey := fmt.Sprintf("tournaments/secondary/%s%s", uuid.NewString(), ext)
-			url, err := utils.UploadFileToR2(photoFile, photoKey)
-			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Failed to upload secondary photo %d", i)})
-			}
-			newPhoto := models.TournamentPhoto{
-				ID:           uuid.NewString(),
-				URL:          url,
-				SortOrder:    i,
-				TournamentID: existingTournament.ID,
-			}
-			newPhotos = append(newPhotos, newPhoto)
-		} else {
-			// Break on first missing photo field (sequential upload assumption)
-			break
-		}
-	}
+    // Get removed photo indices
+    removedIndicesStr := c.FormValue("removed_photo_indices")
+    var removedIndices []int
+    if removedIndicesStr != "" {
+        parts := strings.Split(removedIndicesStr, ",")
+        for _, part := range parts {
+            if idx, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+                removedIndices = append(removedIndices, idx)
+            }
+        }
+    }
 
-	err = s.DB.Transaction(func(tx *gorm.DB) error {
-		// Step 1: Update the main tournament record
-		if err := tx.Model(&existingTournament).Updates(updates).Error; err != nil {
-			return err
-		}
+    err = s.DB.Transaction(func(tx *gorm.DB) error {
+        // Step 1: Update the main tournament record
+        if err := tx.Model(&existingTournament).Updates(updates).Error; err != nil {
+            return err
+        }
 
-		// Step 2: Handle Photo Updates — ONLY wipe old secondary photos if uploading new ones
-		if uploadingSecondaryPhotos {
-			var existingSecondaryPhotos []models.TournamentPhoto
-			if err := tx.Where("tournament_id = ?", existingTournament.ID).Find(&existingSecondaryPhotos).Error; err != nil {
-				return err
-			}
+        // Step 2: Handle Photo Removals
+        for _, sortOrder := range removedIndices {
+            if err := tx.Where("tournament_id = ? AND sort_order = ?", 
+                existingTournament.ID, sortOrder).Delete(&models.TournamentPhoto{}).Error; err != nil {
+                return err
+            }
+        }
 
-			// Delete all existing secondary photos
-			for _, oldPhoto := range existingSecondaryPhotos {
-				if err := tx.Delete(&oldPhoto).Error; err != nil {
-					return err
-				}
-			}
+        // Step 3: Handle Photo Uploads/Updates
+        // Process each photo index from 0 to 4
+        for i := 0; i < 5; i++ {
+            key := fmt.Sprintf("photos[%d]", i)
+            if photoFile, err := c.FormFile(key); err == nil && photoFile.Size > 0 {
+                // Upload the photo
+                ext := filepath.Ext(photoFile.Filename)
+                if ext == "" {
+                    ext = ".jpg"
+                }
+                photoKey := fmt.Sprintf("tournaments/secondary/%s%s", uuid.NewString(), ext)
+                url, err := utils.UploadFileToR2(photoFile, photoKey)
+                if err != nil {
+                    return fmt.Errorf("failed to upload photo at index %d: %w", i, err)
+                }
 
-			// Insert new ones
-			for _, photo := range newPhotos {
-				if err := tx.Create(&photo).Error; err != nil {
-					return err
-				}
-			}
-		}
-		// ✅ If no `photos[i]` were uploaded, existing secondary photos remain untouched.
+                // Check if photo already exists at this sort_order
+                var existingPhoto models.TournamentPhoto
+                err = tx.Where("tournament_id = ? AND sort_order = ?", 
+                    existingTournament.ID, i).First(&existingPhoto).Error
+                
+                if err == nil {
+                    // Update existing photo
+                    if err := tx.Model(&existingPhoto).Update("url", url).Error; err != nil {
+                        return err
+                    }
+                } else if errors.Is(err, gorm.ErrRecordNotFound) {
+                    // Create new photo
+                    newPhoto := models.TournamentPhoto{
+                        ID:           uuid.NewString(),
+                        URL:          url,
+                        SortOrder:    i,
+                        TournamentID: existingTournament.ID,
+                    }
+                    if err := tx.Create(&newPhoto).Error; err != nil {
+                        return err
+                    }
+                } else {
+                    return err
+                }
+            }
+        }
 
-		return nil
-	})
+        return nil
+    })
 
-	if err != nil {
-		log.Printf("ERROR: Transaction failed for updating tournament %s: %v", id, err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update tournament"})
-	}
+    if err != nil {
+        log.Printf("ERROR: Transaction failed for updating tournament %s: %v", id, err)
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update tournament", "details": err.Error()})
+    }
 
-	// Fetch the *fully updated* tournament with ALL associations
-	if err := s.DB.
-		Preload("Game").
-		Preload("Photos", func(db *gorm.DB) *gorm.DB {
-			return db.Order("\"sort_order\" ASC")
-		}).
-		Preload("Batches", func(db *gorm.DB) *gorm.DB {
-			return db.Order("\"sort_order\" ASC")
-		}).
-		Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
-			return db.Order("\"sort_order\" ASC")
-		}).
-		Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
-			return db.Order("\"sort_order\" ASC")
-		}).
-		Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
-			return db.Order("joined_at DESC")
-		}).
-		First(&existingTournament, "id = ?", id).Error; err != nil {
-		log.Printf("ERROR: Could not refetch updated tournament %s: %v", id, err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve updated tournament"})
-	}
+    // Fetch the *fully updated* tournament with ALL associations
+    if err := s.DB.
+        Preload("Game").
+        Preload("Photos", func(db *gorm.DB) *gorm.DB {
+            return db.Order("\"sort_order\" ASC")
+        }).
+        Preload("Batches", func(db *gorm.DB) *gorm.DB {
+            return db.Order("\"sort_order\" ASC")
+        }).
+        Preload("Batches.Matches", func(db *gorm.DB) *gorm.DB {
+            return db.Order("\"sort_order\" ASC")
+        }).
+        Preload("Batches.Matches.Rounds", func(db *gorm.DB) *gorm.DB {
+            return db.Order("\"sort_order\" ASC")
+        }).
+        Preload("Subscriptions", func(db *gorm.DB) *gorm.DB {
+            return db.Order("joined_at DESC")
+        }).
+        First(&existingTournament, "id = ?", id).Error; err != nil {
+        log.Printf("ERROR: Could not refetch updated tournament %s: %v", id, err)
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve updated tournament"})
+    }
 
-	return c.JSON(existingTournament)
+    return c.JSON(existingTournament)
 }
+
 func (s *TournamentService) GetAllTournaments(c *fiber.Ctx) error {
 	var tournaments []models.Tournament
 
