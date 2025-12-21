@@ -21,6 +21,7 @@ func SetupTournamentRoutes(app *fiber.App, tournamentService *services.Tournamen
 	secured.Post("/tournaments", tournamentService.CreateTournament)
 	secured.Get("/tournaments", tournamentService.GetAllTournaments) // Admin view - all tournaments
 	secured.Get("/tournaments/mini", tournamentService.GetAllTournamentsMini) // Admin view - mini list
+	secured.Get("/tournaments/featured-mini", tournamentService.GetFeaturedTournamentsMini)
 	secured.Get("/tournaments/:id", tournamentService.GetTournamentByID) // Admin view - full details
 	secured.Put("/tournaments/:id", tournamentService.UpdateTournament)
 	secured.Delete("/tournaments/:id", tournamentService.DeleteTournament)

@@ -2400,3 +2400,34 @@ func (s *TournamentService) GetPublishedTournamentByID(c *fiber.Ctx) error {
 
 	return c.JSON(tournament)
 }
+
+// GetFeaturedTournamentsMini returns minimal data for featured tournaments only
+func (s *TournamentService) GetFeaturedTournamentsMini(c *fiber.Ctx) error {
+	type FeaturedTournamentMini struct {
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		PrizePool    string `json:"prize_pool"`
+		MainPhotoURL string `json:"main_photo_url"`
+	}
+
+	var tournaments []FeaturedTournamentMini
+
+	err := s.DB.
+		Model(&models.Tournament{}).
+		Select("id", "name", "status", "prize_pool", "main_photo_url").
+		Where("is_featured = ?", true).
+		Where("status IN (?)", []string{"published", "active", "scheduled", "completed"}).
+		Order("created_at DESC").
+		Find(&tournaments).Error
+
+	if err != nil {
+		log.Printf("ERROR fetching featured-mini tournaments: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch featured tournaments"})
+	}
+
+	return c.JSON(fiber.Map{
+		"tournaments": tournaments,
+		"count":       len(tournaments),
+	})
+}
